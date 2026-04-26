@@ -1,0 +1,42 @@
+body {
+    background-color: #f8f9fa;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.card {
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    border: none;
+}
+
+.navbar-brand {
+    font-weight: 600;
+}
+
+.progress {
+    background-color: #e9ecef;
+}
+
+code {
+    color: #d63384;
+    background-color: #f8f9fa;
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+}
+
+.table-hover tbody tr:hover {
+    background-color: rgba(13, 110, 253, 0.04);
+}
+
+.breadcrumb {
+    background-color: transparent;
+    padding: 0;
+}
+
+.toast-container {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 1060;
+}

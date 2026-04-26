@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: developer
+rules:
+- apiGroups: ["", "apps", "networking.k8s.io", "extensions", "autoscaling"]
+  resources: ["pods", "pods/log", "pods/exec", "services", "deployments", "configmaps", "ingresses", "events", "horizontalpodautoscalers"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: ["batch"]
+  resources: ["jobs", "cronjobs"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+# Explicitly DENY access to security/isolation resources
+- apiGroups: ["rbac.authorization.k8s.io"]
+  resources: ["roles", "rolebindings"]
+  verbs: ["*"]
+- apiGroups: [""]
+  resources: ["resourcequotas", "limitranges"]
+  verbs: ["*"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["networkpolicies"]
+  verbs: ["*"]
+- apiGroups: [""]
+  resources: ["secrets"]
+  verbs: ["*"]

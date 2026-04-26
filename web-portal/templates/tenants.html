@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% block title %}Tenants - K3s Lab Platform{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col d-flex justify-content-between align-items-center">
+        <div>
+            <h2><i class="bi bi-people me-2"></i>Tenant Management</h2>
+            <p class="text-muted">Create and manage team namespaces</p>
+        </div>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createModal">
+            <i class="bi bi-plus-lg me-1"></i>Create Tenant
+        </button>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-hover align-middle" id="tenant-table">
+                <thead class="table-light">
+                    <tr>
+                        <th>Namespace</th>
+                        <th>Status</th>
+                        <th>Created</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+        <div id="loading" class="text-center py-4">
+            <div class="spinner-border text-primary" role="status"></div>
+            <p class="mt-2 text-muted">Loading tenants...</p>
+        </div>
+        <div id="no-tenants" class="text-center text-muted py-4 d-none">
+            <i class="bi bi-inbox fs-1"></i>
+            <p class="mt-2">No tenants found. Create your first tenant above.</p>
+        </div>
+    </div>
+</div>
+
+<!-- Create Modal -->
+<div class="modal fade" id="createModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Create New Tenant</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label">Team Namespace Name</label>
+                    <input type="text" class="form-control" id="tenant-name" placeholder="e.g. team-alpha">
+                    <div class="form-text">Lowercase letters, numbers, and hyphens only.</div>
+                </div>
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle me-2"></i>
+                    This will create:<br>
+                    <small>
+                    • Namespace & ServiceAccounts<br>
+                    • Roles & RoleBindings (developer, viewer)<br>
+                    • ResourceQuota & LimitRange<br>
+                    • NetworkPolicies (default-deny + same-namespace + DNS)<br>
+                    • Kubeconfig files for both roles
+                    </small>
+                </div>
+                <div id="create-error" class="alert alert-danger d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btn-create" onclick="createTenant()">
+                    <span class="spinner-border spinner-border-sm d-none" id="create-spinner"></span>
+                    Create Tenant
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">Delete Tenant</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete namespace <strong id="delete-name"></strong>?</p>
+                <p class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>This will delete all resources in this namespace. This action cannot be undone.</p>
+                <div id="delete-error" class="alert alert-danger d-none"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-danger" id="btn-delete" onclick="confirmDelete()">
+                    <span class="spinner-border spinner-border-sm d-none" id="delete-spinner"></span>
+                    Delete
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let deleteTarget = '';
+
+async function loadTenants() {
+    document.getElementById('loading').classList.remove('d-none');
+    document.getElementById('no-tenants').classList.add('d-none');
+    document.getElementById('tenant-table').classList.add('d-none');
+
+    try {
+        const tenants = await apiGet('/api/tenants');
+        document.getElementById('loading').classList.add('d-none');
+
+        if (tenants.error) {
+            showError(tenants.error);
+            return;
+        }
+
+        const tbody = document.querySelector('#tenant-table tbody');
+        if (tenants.length === 0) {
+            document.getElementById('no-tenants').classList.remove('d-none');
+        } else {
+            document.getElementById('tenant-table').classList.remove('d-none');
+            tbody.innerHTML = tenants.map(t => `
+                <tr>
+                    <td><code class="fs-6">${t.name}</code></td>
+                    <td><span class="badge bg-success">${t.status}</span></td>
+                    <td>${formatDate(t.created)}</td>
+                    <td class="text-end">
+                        <a href="/resources/${t.name}" class="btn btn-sm btn-outline-primary me-1">
+                            <i class="bi bi-graph-up"></i> Resources
+                        </a>
+                        <button class="btn btn-sm btn-outline-danger" onclick="promptDelete('${t.name}')">
+                            <i class="bi bi-trash"></i>
+                        </button>
+                    </td>
+                </tr>
+            `).join('');
+        }
+    } catch (e) {
+        document.getElementById('loading').classList.add('d-none');
+        showError('Failed to load tenants');
+    }
+}
+
+async function createTenant() {
+    const name = document.getElementById('tenant-name').value.trim().toLowerCase();
+    const errorEl = document.getElementById('create-error');
+    const btn = document.getElementById('btn-create');
+    const spinner = document.getElementById('create-spinner');
+
+    if (!name) {
+        errorEl.textContent = 'Please enter a namespace name.';
+        errorEl.classList.remove('d-none');
+        return;
+    }
+    if (!/^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/.test(name)) {
+        errorEl.textContent = 'Invalid namespace name format.';
+        errorEl.classList.remove('d-none');
+        return;
+    }
+
+    btn.disabled = true;
+    spinner.classList.remove('d-none');
+    errorEl.classList.add('d-none');
+
+    try {
+        const result = await apiPost('/api/tenants', { name });
+        if (result.error) {
+            errorEl.textContent = result.error;
+            errorEl.classList.remove('d-none');
+        } else {
+            bootstrap.Modal.getInstance(document.getElementById('createModal')).hide();
+            document.getElementById('tenant-name').value = '';
+            loadTenants();
+            showToast('Tenant created successfully!', 'success');
+        }
+    } catch (e) {
+        errorEl.textContent = e.message || 'Failed to create tenant';
+        errorEl.classList.remove('d-none');
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('d-none');
+    }
+}
+
+function promptDelete(name) {
+    deleteTarget = name;
+    document.getElementById('delete-name').textContent = name;
+    document.getElementById('delete-error').classList.add('d-none');
+    new bootstrap.Modal(document.getElementById('deleteModal')).show();
+}
+
+async function confirmDelete() {
+    const btn = document.getElementById('btn-delete');
+    const spinner = document.getElementById('delete-spinner');
+    const errorEl = document.getElementById('delete-error');
+
+    btn.disabled = true;
+    spinner.classList.remove('d-none');
+    errorEl.classList.add('d-none');
+
+    try {
+        const result = await apiDelete(`/api/tenants/${deleteTarget}`);
+        if (result.error) {
+            errorEl.textContent = result.error;
+            errorEl.classList.remove('d-none');
+        } else {
+            bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+            loadTenants();
+            showToast('Tenant deleted successfully!', 'success');
+        }
+    } catch (e) {
+        errorEl.textContent = e.message || 'Failed to delete tenant';
+        errorEl.classList.remove('d-none');
+    } finally {
+        btn.disabled = false;
+        spinner.classList.add('d-none');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', loadTenants);
+</script>
+{% endblock %}

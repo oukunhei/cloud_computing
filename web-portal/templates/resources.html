@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}Resources - {{ namespace }}{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="/dashboard">Dashboard</a></li>
+                <li class="breadcrumb-item"><a href="/tenants">Tenants</a></li>
+                <li class="breadcrumb-item active">{{ namespace }}</li>
+            </ol>
+        </nav>
+        <h2><i class="bi bi-graph-up me-2"></i>Namespace: <code>{{ namespace }}</code></h2>
+    </div>
+</div>
+
+<div class="row g-4" id="resource-content">
+    <!-- ResourceQuota -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header bg-primary text-white">
+                <i class="bi bi-speedometer me-2"></i>Resource Quota
+            </div>
+            <div class="card-body" id="quota-body">
+                <div class="text-center">
+                    <div class="spinner-border text-primary" role="status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LimitRange -->
+    <div class="col-md-6">
+        <div class="card h-100">
+            <div class="card-header bg-info text-white">
+                <i class="bi bi-sliders me-2"></i>Limit Range
+            </div>
+            <div class="card-body" id="limit-body">
+                <div class="text-center">
+                    <div class="spinner-border text-info" role="status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- NetworkPolicies -->
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <i class="bi bi-shield-check me-2"></i>Network Policies
+            </div>
+            <div class="card-body" id="np-body">
+                <div class="text-center">
+                    <div class="spinner-border text-secondary" role="status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pods -->
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-box-seam me-2"></i>Pods</span>
+                <span class="badge bg-light text-dark" id="pod-count">-</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0" id="pod-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Name</th>
+                                <th>Status</th>
+                                <th>Ready</th>
+                                <th>Restarts</th>
+                                <th>Age</th>
+                                <th>CPU Request</th>
+                                <th>Mem Request</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="no-pods" class="text-center text-muted py-4 d-none">
+                    <i class="bi bi-box fs-1"></i>
+                    <p class="mt-2">No pods in this namespace.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const ns = '{{ namespace }}';
+    try {
+        const data = await apiGet(`/api/namespaces/${ns}/resources`);
+        if (data.error) {
+            showError(data.error);
+            return;
+        }
+
+        // Quota
+        const quotaBody = document.getElementById('quota-body');
+        if (data.quota) {
+            const hard = data.quota.hard;
+            const used = data.quota.used;
+            let html = '<table class="table table-sm">';
+            html += '<thead><tr><th>Resource</th><th>Used</th><th>Hard</th><th>Usage</th></tr></thead><tbody>';
+            for (const [key, hval] of Object.entries(hard)) {
+                const uval = used[key] || '0';
+                const pct = parsePercent(uval, hval);
+                html += `<tr>
+                    <td><code>${key}</code></td>
+                    <td>${uval}</td>
+                    <td>${hval}</td>
+                    <td>
+                        <div class="progress" style="height: 20px;">
+                            <div class="progress-bar ${pct > 80 ? 'bg-danger' : pct > 50 ? 'bg-warning' : 'bg-success'}" 
+                                 style="width: ${pct}%">${pct}%</div>
+                        </div>
+                    </td>
+                </tr>`;
+            }
+            html += '</tbody></table>';
+            quotaBody.innerHTML = html;
+        } else {
+            quotaBody.innerHTML = '<p class="text-muted">No ResourceQuota found.</p>';
+        }
+
+        // LimitRange
+        const limitBody = document.getElementById('limit-body');
+        if (data.limitrange) {
+            const limits = data.limitrange.limits[0];
+            let html = '<table class="table table-sm">';
+            html += '<thead><tr><th>Type</th><th>Default</th><th>Default Request</th><th>Min</th><th>Max</th></tr></thead><tbody>';
+            html += `<tr>
+                <td><code>${limits.type}</code></td>
+                <td>CPU: ${limits.default?.cpu || '-'}<br>Mem: ${limits.default?.memory || '-'}</td>
+                <td>CPU: ${limits.defaultRequest?.cpu || '-'}<br>Mem: ${limits.defaultRequest?.memory || '-'}</td>
+                <td>CPU: ${limits.min?.cpu || '-'}<br>Mem: ${limits.min?.memory || '-'}</td>
+                <td>CPU: ${limits.max?.cpu || '-'}<br>Mem: ${limits.max?.memory || '-'}</td>
+            </tr>`;
+            html += '</tbody></table>';
+            limitBody.innerHTML = html;
+        } else {
+            limitBody.innerHTML = '<p class="text-muted">No LimitRange found.</p>';
+        }
+
+        // NetworkPolicies
+        const npBody = document.getElementById('np-body');
+        if (data.networkpolicies && data.networkpolicies.length > 0) {
+            npBody.innerHTML = `<div class="d-flex flex-wrap gap-2">
+                ${data.networkpolicies.map(np => `<span class="badge bg-secondary fs-6"><i class="bi bi-shield-fill me-1"></i>${np}</span>`).join('')}
+            </div>`;
+        } else {
+            npBody.innerHTML = '<p class="text-muted">No NetworkPolicies found.</p>';
+        }
+
+        // Pods
+        if (data.pods && data.pods.length > 0) {
+            document.getElementById('pod-count').textContent = data.pods.length;
+            const tbody = document.querySelector('#pod-table tbody');
+            tbody.innerHTML = data.pods.map(p => {
+                const statusClass = p.status === 'Running' ? 'text-success' : p.status === 'Pending' ? 'text-warning' : 'text-danger';
+                return `<tr>
+                    <td><code>${p.name}</code></td>
+                    <td class="${statusClass}"><i class="bi bi-circle-fill me-1" style="font-size: 8px;"></i>${p.status}</td>
+                    <td>${p.ready}</td>
+                    <td>${p.restarts}</td>
+                    <td>${p.age}</td>
+                    <td>${p.requests.cpu || '-'}</td>
+                    <td>${p.requests.memory || '-'}</td>
+                </tr>`;
+            }).join('');
+        } else {
+            document.getElementById('pod-table').classList.add('d-none');
+            document.getElementById('no-pods').classList.remove('d-none');
+        }
+    } catch (e) {
+        showError('Failed to load namespace resources');
+    }
+});
+
+function parsePercent(used, hard) {
+    const u = parseFloat(used);
+    const h = parseFloat(hard);
+    if (isNaN(u) || isNaN(h) || h === 0) return 0;
+    return Math.min(100, Math.round((u / h) * 100));
+}
+</script>
+{% endblock %}

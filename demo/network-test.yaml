@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-test-client
+  labels:
+    app: nettest
+spec:
+  containers:
+  - name: client
+    image: busybox:stable
+    command: ["sh", "-c", "sleep 3600"]
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: network-test-server
+  labels:
+    app: nettest
+spec:
+  containers:
+  - name: server
+    image: nginx:alpine

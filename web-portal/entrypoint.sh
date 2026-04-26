@@ -1,0 +1,47 @@
+#!/bin/bash
+set -e
+
+# Install kubectl if not present (ensures version compatibility with host K3s)
+if ! command -v kubectl >/dev/null 2>&1; then
+    echo "⏳ kubectl not found in container, installing matching version..."
+    KUBE_VERSION=$(curl -L -s https://dl.k8s/release/stable.txt)
+    curl -LO "https://dl.k8s/release/${KUBE_VERSION}/bin/linux/amd64/kubectl"
+    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+    rm kubectl
+    echo "✅ kubectl ${KUBE_VERSION} installed."
+fi
+
+# Copy kubeconfig from host mount and fix permissions
+if [ -f /host/kubeconfig ]; then
+    cp /host/kubeconfig /app/kubeconfig
+    chmod 600 /app/kubeconfig
+    echo "✅ Kubeconfig loaded from host."
+else
+    echo "⚠️  WARNING: /host/kubeconfig not found. Kubernetes features will not work."
+    echo "   Please ensure K3s is installed and /etc/rancher/k3s/k3s.yaml exists."
+fi
+
+# Wait for Kubernetes API to be reachable
+if [ -f /app/kubeconfig ]; then
+    echo "⏳ Testing Kubernetes connectivity..."
+    for i in {1..30}; do
+        if python -c "
+from kubernetes import config, client
+config.load_kube_config()
+v1 = client.CoreV1Api()
+v1.get_api_resources()
+print('OK')
+" 2>/dev/null; then
+            echo "✅ Kubernetes API connected."
+            break
+        fi
+        if [ "$i" -eq 30 ]; then
+            echo "❌ Could not connect to Kubernetes API. Please check K3s status."
+            exit 1
+        fi
+        sleep 1
+    done
+fi
+
+cd /app/web-portal
+exec python app.py
