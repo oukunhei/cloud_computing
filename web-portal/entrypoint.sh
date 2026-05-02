@@ -4,11 +4,18 @@ set -e
 # Install kubectl if not present (ensures version compatibility with host K3s)
 if ! command -v kubectl >/dev/null 2>&1; then
     echo "⏳ kubectl not found in container, installing matching version..."
-    KUBE_VERSION=$(curl -L -s https://dl.k8s/release/stable.txt)
-    curl -LO "https://dl.k8s/release/${KUBE_VERSION}/bin/linux/amd64/kubectl"
-    install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-    rm kubectl
-    echo "✅ kubectl ${KUBE_VERSION} installed."
+    KUBE_VERSION=$(curl -L -s --max-time 10 --connect-timeout 5 https://dl.k8s/release/stable.txt || true)
+    if [ -z "$KUBE_VERSION" ]; then
+        echo "⚠️  WARNING: Could not fetch kubectl version (network issue). Skipping kubectl installation."
+    else
+        if curl -LO --max-time 30 --connect-timeout 10 "https://dl.k8s/release/${KUBE_VERSION}/bin/linux/amd64/kubectl" 2>/dev/null; then
+            install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+            rm -f kubectl
+            echo "✅ kubectl ${KUBE_VERSION} installed."
+        else
+            echo "⚠️  WARNING: Failed to download kubectl. Skipping installation."
+        fi
+    fi
 fi
 
 # Copy kubeconfig from host mount and fix permissions

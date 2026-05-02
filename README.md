@@ -59,17 +59,17 @@ This platform implements **namespace-as-a-tenant** isolation, where each student
 - **Shared Cluster, Isolated Workloads**: Multiple teams share a single lightweight K3s node, but their workloads, credentials, and network traffic are fully segregated.
 
 ```
-┌──────────────────────────────────────────────┐
-│           K3s Cluster (Shared)               │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  │
-│  │ team-α   │  │ team-β   │  │ team-γ   │  │
-│  │ Namespace│  │ Namespace│  │ Namespace│  │
-│  │ • Quota  │  │ • Quota  │  │ • Quota  │  │
-│  │ • NetPol │  │ • NetPol │  │ • NetPol │  │
-│  │ • dev-user│  │ • dev-user│  │ • dev-user│ │
-│  │ • view-user│ │ • view-user│ │ • view-user│ │
-│  └──────────┘  └──────────┘  └──────────┘  │
-└──────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│           K3s Cluster (Shared)                   │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐  │
+│  │ team-α     │  │ team-β     │  │ team-γ     │  │
+│  │ Namespace  │  │ Namespace  │  │ Namespace  │  │
+│  │ • Quota    │  │ • Quota    │  │ • Quota    │  │
+│  │ • NetPol   │  │ • NetPol   │  │ • NetPol   │  │
+│  │ • dev-user │  │ • dev-user │  │ • dev-user │  │
+│  │ • view-user│  │ • view-user│  │ • view-user│  │
+│  └────────────┘  └────────────┘  └────────────┘  │
+└──────────────────────────────────────────────────┘
 ```
 
 ### 2. Isolation Mechanisms
@@ -181,7 +181,7 @@ kubectl get nodes
 ### 1. Clone the Repository
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/oukunhei/Kubernetes_Lab_Platform.git
 cd Kubernetes_Lab_Platform
 ```
 
@@ -195,7 +195,7 @@ docker-compose up -d --build
 
 Open your browser:
 ```
-http://<your-server-ip>:8080
+http://8.160.177.198:8080
 ```
 
 ### 4. Create Your First Tenant
