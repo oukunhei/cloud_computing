@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+{% block title %}Resource Settings - K3s Lab Platform{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col">
+        <h2><i class="bi bi-sliders me-2"></i>Resource Settings</h2>
+        <p class="text-muted mb-0">
+            Tune tenant ResourceQuota and LimitRange settings from the portal.
+            Current role:
+            <span class="badge {% if identity.role == 'admin' %}bg-danger{% elif identity.role == 'developer' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">
+                {{ identity.role | capitalize }}
+            </span>
+        </p>
+    </div>
+</div>
+
+{% if identity.role == 'admin' %}
+<div class="alert alert-danger">
+    <i class="bi bi-shield-lock me-2"></i>
+    Admin mode can save changes directly to Kubernetes. Use conservative values for shared lab clusters.
+</div>
+{% else %}
+<div class="alert alert-info">
+    <i class="bi bi-eye me-2"></i>
+    {{ identity.role | capitalize }} mode is read-only here. You can inspect tenant limits, but only admin can save resource policy changes.
+</div>
+{% endif %}
+
+<div class="row g-4">
+    <div class="col-lg-3">
+        <div class="card">
+            <div class="card-header">
+                <i class="bi bi-layers me-2"></i>Tenant
+            </div>
+            <div class="card-body">
+                <label class="form-label">Namespace</label>
+                <select class="form-select" id="namespace-select" onchange="loadSettings()">
+                    <option value="">Select a namespace...</option>
+                </select>
+                <div class="form-text">System namespaces are hidden.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-9">
+        <form id="settings-form" class="d-none">
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <i class="bi bi-speedometer me-2"></i>ResourceQuota
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">CPU Requests</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="requests_cpu">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Memory Requests</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="requests_memory">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">CPU Limits</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="limits_cpu">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Memory Limits</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="limits_memory">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Pods</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="pods">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Services</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="services">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">PVC Count</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="persistentvolumeclaims">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Storage Requests</label>
+                            <input class="form-control setting-input" data-group="quota" data-key="requests_storage">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card mb-4">
+                <div class="card-header bg-info text-white">
+                    <i class="bi bi-box me-2"></i>LimitRange
+                </div>
+                <div class="card-body">
+                    <h6>Container Defaults</h6>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Default CPU</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="container_default_cpu">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Default Memory</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="container_default_memory">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Request CPU</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="container_request_cpu">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Request Memory</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="container_request_memory">
+                        </div>
+                    </div>
+
+                    <h6>Upper Bounds</h6>
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Container Max CPU</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="container_max_cpu">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Container Max Memory</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="container_max_memory">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Pod Max CPU</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="pod_max_cpu">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Pod Max Memory</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="pod_max_memory">
+                        </div>
+                    </div>
+
+                    <h6>Storage Claim Bounds</h6>
+                    <div class="row g-3">
+                        <div class="col-md-3">
+                            <label class="form-label">PVC Min Storage</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="pvc_min_storage">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">PVC Max Storage</label>
+                            <input class="form-control setting-input" data-group="limits" data-key="pvc_max_storage">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="d-flex justify-content-between align-items-center">
+                <div id="save-result" class="small text-muted"></div>
+                <button type="button" class="btn btn-success" onclick="saveSettings()" {% if identity.role != 'admin' %}disabled{% endif %}>
+                    <i class="bi bi-cloud-arrow-up me-1"></i>Save to Kubernetes
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const CURRENT_ROLE = "{{ identity.role }}";
+const READ_ONLY = CURRENT_ROLE !== 'admin';
+
+document.addEventListener('DOMContentLoaded', async () => {
+    await loadTenants();
+    setReadonlyState();
+});
+
+async function loadTenants() {
+    const tenants = await apiGet('/api/tenants');
+    const select = document.getElementById('namespace-select');
+    if (tenants.error) {
+        showError(tenants.error);
+        return;
+    }
+    tenants.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.name;
+        opt.textContent = t.name;
+        select.appendChild(opt);
+    });
+}
+
+async function loadSettings() {
+    const ns = document.getElementById('namespace-select').value;
+    if (!ns) {
+        document.getElementById('settings-form').classList.add('d-none');
+        return;
+    }
+
+    const data = await apiGet(`/api/namespaces/${ns}/resource-settings`);
+    if (data.error) {
+        showError(data.error);
+        return;
+    }
+
+    document.querySelectorAll('.setting-input').forEach(input => {
+        const group = input.dataset.group;
+        const key = input.dataset.key;
+        input.value = data[group]?.[key] || '';
+    });
+
+    document.getElementById('settings-form').classList.remove('d-none');
+    document.getElementById('save-result').textContent = READ_ONLY
+        ? 'Read-only view. Log in as admin to save changes.'
+        : 'Changes are not applied until saved.';
+    setReadonlyState();
+}
+
+function setReadonlyState() {
+    document.querySelectorAll('.setting-input').forEach(input => {
+        input.readOnly = READ_ONLY;
+    });
+}
+
+async function saveSettings() {
+    if (READ_ONLY) return;
+
+    const ns = document.getElementById('namespace-select').value;
+    const payload = { quota: {}, limits: {} };
+    document.querySelectorAll('.setting-input').forEach(input => {
+        payload[input.dataset.group][input.dataset.key] = input.value.trim();
+    });
+
+    const resultEl = document.getElementById('save-result');
+    resultEl.textContent = 'Saving...';
+
+    const result = await apiPost(`/api/namespaces/${ns}/resource-settings`, payload);
+    if (result.error) {
+        resultEl.textContent = result.error;
+        resultEl.className = 'small text-danger';
+        showError(result.error);
+        return;
+    }
+
+    resultEl.textContent = result.message;
+    resultEl.className = 'small text-success';
+    showToast('Resource settings saved.', 'success');
+}
+</script>
+{% endblock %}

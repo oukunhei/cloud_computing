@@ -88,3 +88,9 @@ code {
 .role-card-viewer .role-icon {
     background: linear-gradient(135deg, #0dcaf0, #087990);
 }
+
+.setting-input[readonly] {
+    background-color: #f1f3f5;
+    color: #6c757d;
+    cursor: not-allowed;
+}

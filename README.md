@@ -418,6 +418,7 @@ kubectl run test-client --image=busybox -it --rm --restart=Never --namespace tea
 | **Tenant Management** | One-click create/delete tenants with full isolation stack |
 | **Resource Monitoring** | Per-namespace ResourceQuota usage bars, LimitRange rules, Pod list |
 | **Role Action Lab** | Browser buttons to create/delete a demo workload and run live RBAC permission checks |
+| **Resource Settings** | Admin can update tenant ResourceQuota/LimitRange from the browser; developer/viewer get read-only access |
 | **Kubeconfig Generator** | Web UI to download role-appropriate admin/dev/view kubeconfig files |
 | **Permissions Viewer** | Visual matrix showing what each role can/cannot do |
 

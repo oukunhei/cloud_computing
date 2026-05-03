@@ -144,6 +144,12 @@ def permissions():
     return render_template('permissions.html', roles=ROLE_PERMISSIONS)
 
 
+@app.route('/settings')
+@require_login
+def settings_page():
+    return render_template('settings.html')
+
+
 # API Routes
 @app.route('/api/cluster/info')
 def api_cluster_info():
@@ -192,6 +198,26 @@ def api_delete_tenant(name):
 @require_namespace_access
 def api_namespace_resources(namespace):
     return jsonify(k8s.get_namespace_resources(namespace))
+
+
+@app.route('/api/namespaces/<namespace>/resource-settings', methods=['GET'])
+@require_login
+@require_namespace_access
+def api_get_resource_settings(namespace):
+    return jsonify(k8s.get_resource_settings(namespace))
+
+
+@app.route('/api/namespaces/<namespace>/resource-settings', methods=['POST'])
+@require_login
+@require_namespace_access
+@require_admin_api
+def api_update_resource_settings(namespace):
+    data = request.get_json() or {}
+    try:
+        message = k8s.update_resource_settings(namespace, data)
+        return jsonify({'success': True, 'message': message})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/namespaces/<namespace>/demo-workload', methods=['POST'])

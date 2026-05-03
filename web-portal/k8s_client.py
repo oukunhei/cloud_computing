@@ -367,6 +367,191 @@ class K8sClient:
             'checks': results
         }
 
+    def get_resource_settings(self, namespace):
+        if not self.connected:
+            return {'error': 'Not connected to Kubernetes'}
+
+        resources = self.get_namespace_resources(namespace)
+        if resources.get('error'):
+            return resources
+
+        quota = resources.get('quota') or {}
+        hard = quota.get('hard') or {}
+        limitrange = resources.get('limitrange') or {}
+        limits = limitrange.get('limits') or []
+
+        container_limit = self._find_limit(limits, 'Container')
+        pod_limit = self._find_limit(limits, 'Pod')
+        pvc_limit = self._find_limit(limits, 'PersistentVolumeClaim')
+
+        return {
+            'namespace': namespace,
+            'quota_name': quota.get('name', 'team-quota'),
+            'limitrange_name': limitrange.get('name', 'mem-cpu-limit'),
+            'quota': {
+                'requests_cpu': hard.get('requests.cpu', '2'),
+                'requests_memory': hard.get('requests.memory', '4Gi'),
+                'limits_cpu': hard.get('limits.cpu', '4'),
+                'limits_memory': hard.get('limits.memory', '8Gi'),
+                'pods': hard.get('pods', '20'),
+                'services': hard.get('services', '10'),
+                'persistentvolumeclaims': hard.get('persistentvolumeclaims', '5'),
+                'requests_storage': hard.get('requests.storage', '20Gi')
+            },
+            'limits': {
+                'container_default_cpu': self._resource_value(container_limit, 'default', 'cpu', '500m'),
+                'container_default_memory': self._resource_value(container_limit, 'default', 'memory', '1Gi'),
+                'container_request_cpu': self._resource_value(container_limit, 'defaultRequest', 'cpu', '200m'),
+                'container_request_memory': self._resource_value(container_limit, 'defaultRequest', 'memory', '256Mi'),
+                'container_max_cpu': self._resource_value(container_limit, 'max', 'cpu', '2'),
+                'container_max_memory': self._resource_value(container_limit, 'max', 'memory', '4Gi'),
+                'pod_max_cpu': self._resource_value(pod_limit, 'max', 'cpu', '2'),
+                'pod_max_memory': self._resource_value(pod_limit, 'max', 'memory', '4Gi'),
+                'pvc_min_storage': self._resource_value(pvc_limit, 'min', 'storage', '1Gi'),
+                'pvc_max_storage': self._resource_value(pvc_limit, 'max', 'storage', '10Gi')
+            }
+        }
+
+    def update_resource_settings(self, namespace, settings):
+        if not self.connected:
+            raise RuntimeError('Not connected to Kubernetes')
+
+        quota_name = settings.get('quota_name') or 'team-quota'
+        limitrange_name = settings.get('limitrange_name') or 'mem-cpu-limit'
+        quota = settings.get('quota') or {}
+        limits = settings.get('limits') or {}
+
+        hard = {
+            'requests.cpu': quota.get('requests_cpu', '2'),
+            'requests.memory': quota.get('requests_memory', '4Gi'),
+            'requests.ephemeral-storage': quota.get('requests_ephemeral_storage', '8Gi'),
+            'limits.cpu': quota.get('limits_cpu', '4'),
+            'limits.memory': quota.get('limits_memory', '8Gi'),
+            'limits.ephemeral-storage': quota.get('limits_ephemeral_storage', '16Gi'),
+            'requests.storage': quota.get('requests_storage', '20Gi'),
+            'persistentvolumeclaims': quota.get('persistentvolumeclaims', '5'),
+            'pods': quota.get('pods', '20'),
+            'services': quota.get('services', '10'),
+            'services.nodeports': quota.get('services_nodeports', '0'),
+            'services.loadbalancers': quota.get('services_loadbalancers', '0'),
+            'configmaps': quota.get('configmaps', '20'),
+            'secrets': quota.get('secrets', '20'),
+            'count/deployments.apps': quota.get('count_deployments_apps', '10'),
+            'count/replicasets.apps': quota.get('count_replicasets_apps', '20'),
+            'count/statefulsets.apps': quota.get('count_statefulsets_apps', '3'),
+            'count/jobs.batch': quota.get('count_jobs_batch', '10'),
+            'count/cronjobs.batch': quota.get('count_cronjobs_batch', '5'),
+            'count/ingresses.networking.k8s.io': quota.get('count_ingresses_networking_k8s_io', '5')
+        }
+
+        limit_spec = [
+            {
+                'type': 'Container',
+                'default': {
+                    'cpu': limits.get('container_default_cpu', '500m'),
+                    'memory': limits.get('container_default_memory', '1Gi'),
+                    'ephemeral-storage': limits.get('container_default_ephemeral_storage', '1Gi')
+                },
+                'defaultRequest': {
+                    'cpu': limits.get('container_request_cpu', '200m'),
+                    'memory': limits.get('container_request_memory', '256Mi'),
+                    'ephemeral-storage': limits.get('container_request_ephemeral_storage', '512Mi')
+                },
+                'max': {
+                    'cpu': limits.get('container_max_cpu', '2'),
+                    'memory': limits.get('container_max_memory', '4Gi'),
+                    'ephemeral-storage': limits.get('container_max_ephemeral_storage', '4Gi')
+                },
+                'min': {
+                    'cpu': limits.get('container_min_cpu', '50m'),
+                    'memory': limits.get('container_min_memory', '64Mi'),
+                    'ephemeral-storage': limits.get('container_min_ephemeral_storage', '128Mi')
+                },
+                'maxLimitRequestRatio': {
+                    'cpu': limits.get('container_ratio_cpu', '4'),
+                    'memory': limits.get('container_ratio_memory', '4')
+                }
+            },
+            {
+                'type': 'Pod',
+                'max': {
+                    'cpu': limits.get('pod_max_cpu', '2'),
+                    'memory': limits.get('pod_max_memory', '4Gi'),
+                    'ephemeral-storage': limits.get('pod_max_ephemeral_storage', '6Gi')
+                },
+                'min': {
+                    'cpu': limits.get('pod_min_cpu', '50m'),
+                    'memory': limits.get('pod_min_memory', '64Mi'),
+                    'ephemeral-storage': limits.get('pod_min_ephemeral_storage', '128Mi')
+                }
+            },
+            {
+                'type': 'PersistentVolumeClaim',
+                'max': {'storage': limits.get('pvc_max_storage', '10Gi')},
+                'min': {'storage': limits.get('pvc_min_storage', '1Gi')}
+            }
+        ]
+
+        quota_body = {
+            'apiVersion': 'v1',
+            'kind': 'ResourceQuota',
+            'metadata': {
+                'name': quota_name,
+                'namespace': namespace,
+                'labels': {'tenant.lab/control': 'resource-quota'},
+                'annotations': {
+                    'tenant.lab/purpose': 'Cap total namespace usage so one team cannot exhaust shared cluster capacity.'
+                }
+            },
+            'spec': {'hard': hard}
+        }
+        limit_body = {
+            'apiVersion': 'v1',
+            'kind': 'LimitRange',
+            'metadata': {
+                'name': limitrange_name,
+                'namespace': namespace,
+                'labels': {'tenant.lab/control': 'limit-range'},
+                'annotations': {
+                    'tenant.lab/purpose': 'Apply safe defaults and per-object bounds so tenant workloads are schedulable and predictable.'
+                }
+            },
+            'spec': {'limits': limit_spec}
+        }
+
+        self._replace_or_create_resource_quota(namespace, quota_name, quota_body)
+        self._replace_or_create_limit_range(namespace, limitrange_name, limit_body)
+        return f'ResourceQuota {quota_name} and LimitRange {limitrange_name} were updated in {namespace}.'
+
+    def _replace_or_create_resource_quota(self, namespace, name, body):
+        try:
+            self.v1.replace_namespaced_resource_quota(name=name, namespace=namespace, body=body)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                self.v1.create_namespaced_resource_quota(namespace=namespace, body=body)
+            else:
+                raise
+
+    def _replace_or_create_limit_range(self, namespace, name, body):
+        try:
+            self.v1.replace_namespaced_limit_range(name=name, namespace=namespace, body=body)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                self.v1.create_namespaced_limit_range(namespace=namespace, body=body)
+            else:
+                raise
+
+    def _find_limit(self, limits, limit_type):
+        for limit in limits:
+            if limit.get('type') == limit_type:
+                return limit
+        return {}
+
+    def _resource_value(self, limit, field, resource, default):
+        snake_field = ''.join(['_' + c.lower() if c.isupper() else c for c in field]).lstrip('_')
+        values = limit.get(field) or limit.get(snake_field) or {}
+        return values.get(resource, default)
+
     def _parse_resource(self, value):
         if not value:
             return 0
