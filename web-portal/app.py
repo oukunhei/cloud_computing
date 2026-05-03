@@ -199,7 +199,7 @@ def api_namespace_resources(namespace):
 @require_workload_write
 def api_create_demo_workload(namespace):
     try:
-        message = k8s.create_demo_workload(namespace)
+        message = k8s.create_demo_workload(namespace, session.get('role'))
         return jsonify({'success': True, 'message': message})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -210,7 +210,7 @@ def api_create_demo_workload(namespace):
 @require_workload_write
 def api_delete_demo_workload(namespace):
     try:
-        message = k8s.delete_demo_workload(namespace)
+        message = k8s.delete_demo_workload(namespace, session.get('role'))
         return jsonify({'success': True, 'message': message})
     except Exception as e:
         return jsonify({'error': str(e)}), 500

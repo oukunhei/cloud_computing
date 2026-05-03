@@ -432,9 +432,9 @@ Use this flow to demonstrate resource and permission differences directly in the
 1. Log in as `admin`.
 2. Open **Tenants** and create `team-alpha`.
 3. Open **Resources** for `team-alpha`.
-4. In **Role Action Lab**, click **Create Demo Workload**. A `lab-demo-nginx` Deployment and Service are created, and the Pod list refreshes.
+4. In **Role Action Lab**, click **Create Admin Demo**. A `lab-demo-admin` Deployment and Service are created, and the Pod list refreshes.
 5. Click **Run Permission Checks**. The page runs `kubectl auth can-i --as=system:serviceaccount:lab-platform-users:team-alpha-admin ...` and shows which actions are allowed or denied.
-6. Log out, log in as `developer`, and open the same namespace. The developer can create/delete the demo workload, but the permission checks show denial for `secrets`, `resourcequotas`, and RBAC modification.
+6. Log out, log in as `developer`, and open the same namespace. The developer can create/delete its own `lab-demo-developer` workload while `lab-demo-admin` remains separate; permission checks show denial for `secrets`, `resourcequotas`, and RBAC modification.
 7. Log out, log in as `viewer`, and open the same namespace. The viewer can inspect resources and run permission checks, while create/delete workload buttons are disabled.
 
 This browser flow shows both platform UX controls and live Kubernetes RBAC checks.

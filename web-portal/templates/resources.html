@@ -41,21 +41,21 @@
                 {% elif identity.role == 'developer' %}
                 <div class="alert alert-warning mb-3">
                     <i class="bi bi-terminal me-2"></i>
-                    Developer can create and delete demo workloads, but RBAC, secrets, quotas, and network policies remain protected.
+                    Developer can create and delete <code>lab-demo-developer</code>, but RBAC, secrets, quotas, and network policies remain protected.
                 </div>
                 {% else %}
                 <div class="alert alert-danger mb-3">
                     <i class="bi bi-shield-lock me-2"></i>
-                    Admin can manage namespace resources and download all role kubeconfigs; namespace lifecycle is still a platform-admin action.
+                    Admin can create and delete <code>lab-demo-admin</code>; namespace lifecycle is still a platform-admin action.
                 </div>
                 {% endif %}
 
                 <div class="d-flex flex-wrap gap-2 mb-3">
                     <button class="btn btn-success" onclick="createDemoWorkload()" {% if identity.role == 'viewer' %}disabled{% endif %}>
-                        <i class="bi bi-plus-circle me-1"></i>Create Demo Workload
+                        <i class="bi bi-plus-circle me-1"></i>Create {{ identity.role | capitalize }} Demo
                     </button>
                     <button class="btn btn-outline-danger" onclick="deleteDemoWorkload()" {% if identity.role == 'viewer' %}disabled{% endif %}>
-                        <i class="bi bi-trash me-1"></i>Delete Demo Workload
+                        <i class="bi bi-trash me-1"></i>Delete {{ identity.role | capitalize }} Demo
                     </button>
                     <button class="btn btn-outline-primary" onclick="runPermissionChecks()">
                         <i class="bi bi-shield-check me-1"></i>Run Permission Checks

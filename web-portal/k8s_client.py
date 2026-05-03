@@ -204,14 +204,24 @@ class K8sClient:
 
         return result
 
-    def create_demo_workload(self, namespace):
+    def _demo_workload_name(self, owner):
+        safe_owner = ''.join(c if c.isalnum() else '-' for c in owner.lower()).strip('-')
+        if not safe_owner:
+            safe_owner = 'user'
+        return f'lab-demo-{safe_owner[:40]}'
+
+    def create_demo_workload(self, namespace, owner):
         if not self.connected:
             raise RuntimeError('Not connected to Kubernetes')
 
-        labels = {'app': 'lab-demo'}
+        name = self._demo_workload_name(owner)
+        labels = {
+            'app': 'lab-demo',
+            'tenant.lab/demo-owner': owner
+        }
         deployment = client.V1Deployment(
             metadata=client.V1ObjectMeta(
-                name='lab-demo-nginx',
+                name=name,
                 namespace=namespace,
                 labels=labels
             ),
@@ -232,7 +242,7 @@ class K8sClient:
         )
         service = client.V1Service(
             metadata=client.V1ObjectMeta(
-                name='lab-demo-nginx',
+                name=name,
                 namespace=namespace,
                 labels=labels
             ),
@@ -254,30 +264,31 @@ class K8sClient:
             if e.status != 409:
                 raise
 
-        return 'Demo nginx Deployment and Service are present.'
+        return f'Demo workload {name} Deployment and Service are present.'
 
-    def delete_demo_workload(self, namespace):
+    def delete_demo_workload(self, namespace, owner):
         if not self.connected:
             raise RuntimeError('Not connected to Kubernetes')
 
+        name = self._demo_workload_name(owner)
         deleted = []
         try:
-            self.apps_v1.delete_namespaced_deployment(name='lab-demo-nginx', namespace=namespace)
+            self.apps_v1.delete_namespaced_deployment(name=name, namespace=namespace)
             deleted.append('Deployment')
         except client.exceptions.ApiException as e:
             if e.status != 404:
                 raise
 
         try:
-            self.v1.delete_namespaced_service(name='lab-demo-nginx', namespace=namespace)
+            self.v1.delete_namespaced_service(name=name, namespace=namespace)
             deleted.append('Service')
         except client.exceptions.ApiException as e:
             if e.status != 404:
                 raise
 
         if not deleted:
-            return 'Demo workload was already absent.'
-        return f"Deleted demo {' and '.join(deleted)}."
+            return f'Demo workload {name} was already absent.'
+        return f"Deleted demo workload {name} {' and '.join(deleted)}."
 
     def permission_checks(self, namespace, portal_role):
         if not shutil.which('kubectl'):
