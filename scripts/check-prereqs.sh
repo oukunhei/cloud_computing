@@ -8,6 +8,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 KUBECONFIG_HOST_PATH="${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}"
+HOST_KUBECTL_PATH="${HOST_KUBECTL_PATH:-/usr/local/bin/kubectl}"
 FLASK_PORT="${FLASK_PORT:-8080}"
 
 ok() {
@@ -51,6 +52,12 @@ if command -v kubectl >/dev/null 2>&1; then
     ok "kubectl found: $(kubectl version --client=true --short 2>/dev/null || kubectl version --client=true)"
 else
     warn "kubectl is not installed on the host. The portal image includes kubectl, but host-side manual tests need it."
+fi
+
+if [ -f "$HOST_KUBECTL_PATH" ]; then
+    ok "host kubectl mount source found: $HOST_KUBECTL_PATH"
+else
+    warn "HOST_KUBECTL_PATH does not exist: $HOST_KUBECTL_PATH. If image download also fails, set this to the real host kubectl path."
 fi
 
 if [ ! -f "$KUBECONFIG_HOST_PATH" ]; then

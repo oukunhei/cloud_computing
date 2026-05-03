@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   web:
     build:
@@ -11,6 +9,7 @@ services:
     network_mode: host
     volumes:
       - ${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}:/host/kubeconfig:ro
+      - ${HOST_KUBECTL_PATH:-/usr/local/bin/kubectl}:/host/kubectl:ro
     environment:
       - KUBECONFIG=/app/kubeconfig
       - FLASK_PORT=${FLASK_PORT:-8080}
@@ -18,4 +17,5 @@ services:
       - SECRET_KEY=${SECRET_KEY:-dev-only-change-me}
       - KUBECTL_VERSION=${KUBECTL_VERSION:-v1.30.6}
       - KUBECTL_BASE_URL=${KUBECTL_BASE_URL:-https://dl.k8s.io/release}
+      - RUNTIME_KUBECTL_INSTALL=${RUNTIME_KUBECTL_INSTALL:-auto}
     restart: unless-stopped

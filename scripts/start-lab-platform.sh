@@ -11,6 +11,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 KUBECONFIG_HOST_PATH="${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}"
+HOST_KUBECTL_PATH="${HOST_KUBECTL_PATH:-/usr/local/bin/kubectl}"
 FLASK_PORT="${FLASK_PORT:-8080}"
 DEMO_TENANT="${DEMO_TENANT:-team-alpha}"
 
@@ -49,6 +50,13 @@ else
     ok ".env already exists"
 fi
 
+for env_key in HOST_KUBECTL_PATH KUBECTL_VERSION KUBECTL_BASE_URL RUNTIME_KUBECTL_INSTALL SECRET_KEY; do
+    if ! grep -q "^${env_key}=" .env; then
+        grep "^${env_key}=" .env.example >> .env
+        ok "Added missing ${env_key} to .env"
+    fi
+done
+
 log "Checking Docker"
 command -v docker >/dev/null 2>&1 || fail "Docker is required. Install Docker Engine first."
 docker info >/dev/null 2>&1 || fail "Docker daemon is not running or current user cannot access it."
@@ -86,18 +94,18 @@ fi
 ok "Kubeconfig is readable: $KUBECONFIG_HOST_PATH"
 
 log "Running preflight checks"
-KUBECONFIG_HOST_PATH="$KUBECONFIG_HOST_PATH" FLASK_PORT="$FLASK_PORT" ./scripts/check-prereqs.sh
+KUBECONFIG_HOST_PATH="$KUBECONFIG_HOST_PATH" HOST_KUBECTL_PATH="$HOST_KUBECTL_PATH" FLASK_PORT="$FLASK_PORT" ./scripts/check-prereqs.sh
 
 log "Starting web portal"
 compose up -d --build
 
 log "Waiting for portal HTTP endpoint"
-for i in {1..40}; do
+for i in {1..60}; do
     if curl -fsS "http://127.0.0.1:${FLASK_PORT}/login" >/dev/null 2>&1; then
         ok "Portal is reachable at http://127.0.0.1:${FLASK_PORT}"
         break
     fi
-    if [ "$i" -eq 40 ]; then
+    if [ "$i" -eq 60 ]; then
         compose logs --tail=80 web || true
         fail "Portal did not become reachable on port $FLASK_PORT."
     fi

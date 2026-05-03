@@ -1,5 +1,6 @@
 import os
 import subprocess
+import shutil
 import yaml
 from datetime import datetime, timezone
 from kubernetes import client, config
@@ -84,6 +85,12 @@ class K8sClient:
             return {'error': str(e)}
 
     def create_tenant(self, name):
+        if not shutil.which('kubectl'):
+            raise RuntimeError(
+                'kubectl is not available in the portal container. '
+                'Set HOST_KUBECTL_PATH to a valid host kubectl binary or configure KUBECTL_BASE_URL, then rebuild/restart.'
+            )
+
         script_dir = os.path.join(os.path.dirname(__file__), '..')
         script_path = os.path.join(script_dir, 'onboard-team.sh')
 
@@ -230,6 +237,12 @@ class K8sClient:
         return f"{mins}m"
 
     def generate_kubeconfig(self, namespace, role):
+        if not shutil.which('kubectl'):
+            raise RuntimeError(
+                'kubectl is not available in the portal container. '
+                'Set HOST_KUBECTL_PATH to a valid host kubectl binary or configure KUBECTL_BASE_URL, then rebuild/restart.'
+            )
+
         service_accounts = {
             'admin': f'{namespace}-admin',
             'dev': f'{namespace}-dev',
