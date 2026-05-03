@@ -15,15 +15,15 @@
     </div>
 </div>
 
-{% if identity.role == 'admin' %}
+{% if identity.is_platform_admin %}
 <div class="alert alert-danger">
     <i class="bi bi-shield-lock me-2"></i>
-    Admin mode can save changes directly to Kubernetes. Use conservative values for shared lab clusters.
+    Platform admin mode can save changes directly to Kubernetes. Use conservative values for shared lab clusters.
 </div>
 {% else %}
 <div class="alert alert-info">
     <i class="bi bi-eye me-2"></i>
-    {{ identity.role | capitalize }} mode is read-only here. You can inspect tenant limits, but only admin can save resource policy changes.
+    {{ identity.role | capitalize }} mode is read-only here. You can inspect tenant limits, but only platform admin can save resource policy changes.
 </div>
 {% endif %}
 
@@ -148,7 +148,7 @@
 
             <div class="d-flex justify-content-between align-items-center">
                 <div id="save-result" class="small text-muted"></div>
-                <button type="button" class="btn btn-success" onclick="saveSettings()" {% if identity.role != 'admin' %}disabled{% endif %}>
+                <button type="button" class="btn btn-success" onclick="saveSettings()" {% if not identity.is_platform_admin %}disabled{% endif %}>
                     <i class="bi bi-cloud-arrow-up me-1"></i>Save to Kubernetes
                 </button>
             </div>
@@ -159,8 +159,7 @@
 
 {% block scripts %}
 <script>
-const CURRENT_ROLE = "{{ identity.role }}";
-const READ_ONLY = CURRENT_ROLE !== 'admin';
+const READ_ONLY = {{ 'false' if identity.is_platform_admin else 'true' }};
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadTenants();

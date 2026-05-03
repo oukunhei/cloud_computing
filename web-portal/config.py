@@ -43,12 +43,12 @@ ROLE_PERMISSIONS = {
         'note': 'Read-only access is implemented by granting only get/list/watch verbs.'
     },
     'admin': {
-        'description': 'Full tenant namespace administration access',
+        'description': 'Full tenant namespace administration access; platform-wide only when no namespace is selected',
         'can_read': ['ALL NAMESPACED RESOURCES'],
         'can_write': ['ALL NAMESPACED RESOURCES'],
         'can_exec': True,
-        'denied': ['cluster-scoped resources', 'namespace deletion'],
-        'note': 'Tenant admin is powerful inside one namespace; platform admin kubeconfig is still required for cluster lifecycle operations.'
+        'denied': ['other tenant namespaces', 'cluster-scoped resources', 'namespace deletion'],
+        'note': 'Tenant admin is powerful inside one namespace. Leave namespace empty only for platform-admin portal operations.'
     }
 }
 

@@ -12,10 +12,12 @@ VALID_ROLES = {'admin', 'developer', 'viewer'}
 
 
 def current_identity():
+    namespace = session.get('namespace')
     return {
         'role': session.get('role'),
-        'namespace': session.get('namespace'),
-        'is_logged_in': bool(session.get('role'))
+        'namespace': namespace,
+        'is_logged_in': bool(session.get('role')),
+        'is_platform_admin': is_platform_admin()
     }
 
 
@@ -31,18 +33,21 @@ def require_login(view):
 def require_admin_api(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
-        if session.get('role') != 'admin':
-            return jsonify({'error': 'Only the simulated admin role can perform this action.'}), 403
+        if not is_platform_admin():
+            return jsonify({'error': 'Only platform admin can perform this action. Tenant admins are scoped to their own namespace.'}), 403
         return view(*args, **kwargs)
     return wrapped
 
 
+def is_platform_admin():
+    return session.get('role') == 'admin' and not session.get('namespace')
+
+
 def can_use_namespace(namespace):
-    role = session.get('role')
     selected_namespace = session.get('namespace')
-    if role == 'admin':
+    if is_platform_admin():
         return True
-    return not selected_namespace or selected_namespace == namespace
+    return bool(selected_namespace) and selected_namespace == namespace
 
 
 def require_namespace_access(view):
@@ -101,6 +106,13 @@ def login():
                 error='Namespace must be DNS-compatible.'
             ), 400
 
+        if role in ('developer', 'viewer') and not namespace:
+            return render_template(
+                'login.html',
+                roles=ROLE_PERMISSIONS,
+                error='Developer and viewer sessions must be scoped to a tenant namespace.'
+            ), 400
+
         session['role'] = role
         session['namespace'] = namespace
         return redirect(url_for('dashboard'))
@@ -129,6 +141,8 @@ def tenants():
 @app.route('/resources/<namespace>')
 @require_login
 def resources_page(namespace):
+    if not can_use_namespace(namespace):
+        return redirect(url_for('dashboard'))
     return render_template('resources.html', namespace=namespace)
 
 
@@ -159,7 +173,13 @@ def api_cluster_info():
 @app.route('/api/tenants', methods=['GET'])
 @require_login
 def api_list_tenants():
-    return jsonify(k8s.list_tenants())
+    tenants = k8s.list_tenants()
+    if isinstance(tenants, dict) and tenants.get('error'):
+        return jsonify(tenants)
+    selected_namespace = session.get('namespace')
+    if not is_platform_admin():
+        tenants = [tenant for tenant in tenants if tenant.get('name') == selected_namespace]
+    return jsonify(tenants)
 
 
 @app.route('/api/tenants', methods=['POST'])
@@ -212,6 +232,8 @@ def api_get_resource_settings(namespace):
 @require_namespace_access
 @require_admin_api
 def api_update_resource_settings(namespace):
+    if not is_platform_admin():
+        return jsonify({'error': 'Only platform admin can change ResourceQuota and LimitRange. Tenant admins can inspect them but cannot weaken platform guardrails.'}), 403
     data = request.get_json() or {}
     try:
         message = k8s.update_resource_settings(namespace, data)
@@ -261,11 +283,9 @@ def api_generate_kubeconfig(namespace):
         return jsonify({'error': 'Invalid role. Must be "admin", "dev", or "view"'}), 400
 
     current_role = session.get('role')
-    allowed_downloads = {
-        'admin': {'admin', 'dev', 'view'},
-        'developer': {'dev'},
-        'viewer': {'view'}
-    }
+    allowed_downloads = {'developer': {'dev'}, 'viewer': {'view'}}
+    if is_platform_admin() or current_role == 'admin':
+        allowed_downloads['admin'] = {'admin', 'dev', 'view'}
     if role not in allowed_downloads.get(current_role, set()):
         return jsonify({'error': 'You cannot download kubeconfig files for a higher-privilege role.'}), 403
 

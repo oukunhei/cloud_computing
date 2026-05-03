@@ -23,7 +23,7 @@
                                 <div class="mb-3">
                                     <label class="form-label">Role</label>
                                     <select class="form-select form-select-lg" name="role" id="role-select-login" required>
-                                        <option value="admin">Admin - platform operations</option>
+                                        <option value="admin">Admin - platform or tenant operations</option>
                                         <option value="developer">Developer - deploy workloads</option>
                                         <option value="viewer">Viewer - read-only inspection</option>
                                     </select>
@@ -31,7 +31,7 @@
                                 <div class="mb-4">
                                     <label class="form-label">Tenant Namespace</label>
                                     <input class="form-control form-control-lg" name="namespace" placeholder="e.g. team-alpha">
-                                    <div class="form-text">Optional for admin overview. Required for realistic developer/viewer demos.</div>
+                                    <div class="form-text">Leave empty only for platform admin. Set a namespace for tenant admin, developer, or viewer.</div>
                                 </div>
                                 <button class="btn btn-dark btn-lg w-100" type="submit">
                                     <i class="bi bi-box-arrow-in-right me-2"></i>Enter Portal

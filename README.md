@@ -93,18 +93,20 @@ The platform implements a **three-tier RBAC model** using Kubernetes native `Rol
 
 | Role | Read | Write | Exec/PortForward | Not Granted / Restricted |
 |------|------|-------|------------------|-------------------|
-| **Admin** | All namespaced resources | All namespaced resources | Yes | Cannot delete namespaces unless using platform admin kubeconfig |
+| **Admin** | All namespaced resources in its own tenant namespace | All namespaced resources in its own tenant namespace | Yes | Other tenant namespaces, cluster-scoped resources, namespace deletion |
 | **Developer** | Pods, logs, Deployments, Services, ConfigMaps, Ingresses, Events, HPA, Jobs | Workloads and app-facing resources | Yes | `secrets`, RBAC, quotas, limit ranges, network policies |
 | **Viewer** | Pods, logs, Deployments, Services, ConfigMaps, Ingresses, Events, HPA, Jobs | — | No | write verbs, exec, port-forward, secrets, RBAC |
 
 **Why this matters**: Developers cannot read `secrets` (mitigates credential leakage if kubeconfig is lost) and cannot modify platform-level controls (prevents privilege escalation). Viewers are strictly read-only and cannot exec into pods.
+
+**Portal admin scoping**: The web portal distinguishes **platform admin** from **tenant admin**. Logging in as `admin` without a namespace is a platform-admin demo session that can create/delete tenants and update shared guardrails. Logging in as `admin` with a namespace, such as `team-alpha`, is a tenant-admin session and is restricted by the portal API to that namespace only; it cannot create demo workloads, download kubeconfigs, or change settings for another namespace.
 
 ### 4. Platform-Style Kubernetes Design
 
 Rather than a collection of manual `kubectl` commands, this project is designed as a **mini PaaS (Platform as a Service)**:
 
 - **Automation Layer**: `onboard-team.sh` encapsulates all provisioning logic (namespace, RBAC, quota, netpol, kubeconfig generation) into an idempotent-like workflow.
-- **Management Portal**: A Flask-based web UI provides **Dashboard** (cluster telemetry), **Tenant Management** (CRUD), **Resource Monitor** (quota usage, pod list), **Kubeconfig Generator** (TokenRequest API), and **Permissions Viewer** (RBAC matrix).
+- **Management Portal**: A Flask-based web UI provides **Dashboard** (cluster telemetry), **Tenant Management** (platform-admin CRUD), **Resource Monitor** (quota usage, pod list), **Kubeconfig Generator** (TokenRequest API), and **Permissions Viewer** (RBAC matrix).
 - **Role Login Demo**: The portal starts with a simulated `admin` / `developer` / `viewer` login screen so evaluators can see how different roles experience the platform.
 - **Self-Service Onboarding**: A student team can be onboarded in ~30 seconds without the platform administrator running individual `kubectl` commands.
 - **Token Lifecycle Management**: Uses the `TokenRequest` API (`kubectl create token`) instead of static ServiceAccount secrets, generating time-bound (1-year), revocable tokens per tenant role.

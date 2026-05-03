@@ -8,16 +8,17 @@
             <h2><i class="bi bi-people me-2"></i>Tenant Management</h2>
             <p class="text-muted">Create and manage team namespaces</p>
         </div>
-        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createModal" {% if identity.role != 'admin' %}disabled{% endif %}>
+        <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#createModal" {% if not identity.is_platform_admin %}disabled{% endif %}>
             <i class="bi bi-plus-lg me-1"></i>Create Tenant
         </button>
     </div>
 </div>
 
-{% if identity.role != 'admin' %}
+{% if not identity.is_platform_admin %}
 <div class="alert alert-warning">
     <i class="bi bi-lock me-2"></i>
-    You are logged in as <strong>{{ identity.role }}</strong>. Tenant creation and deletion are admin-only actions.
+    You are logged in as <strong>{{ identity.role }}</strong>{% if identity.namespace %} scoped to <code>{{ identity.namespace }}</code>{% endif %}.
+    Tenant creation and deletion require platform admin.
 </div>
 {% endif %}
 
@@ -112,7 +113,7 @@
 
 {% block scripts %}
 <script>
-const CURRENT_ROLE = "{{ identity.role }}";
+const IS_PLATFORM_ADMIN = {{ 'true' if identity.is_platform_admin else 'false' }};
 let deleteTarget = '';
 
 async function loadTenants() {
@@ -143,7 +144,7 @@ async function loadTenants() {
                         <a href="/resources/${t.name}" class="btn btn-sm btn-outline-primary me-1">
                             <i class="bi bi-graph-up"></i> Resources
                         </a>
-                        ${CURRENT_ROLE === 'admin' ? `
+                        ${IS_PLATFORM_ADMIN ? `
                         <button class="btn btn-sm btn-outline-danger" onclick="promptDelete('${t.name}')">
                             <i class="bi bi-trash"></i>
                         </button>

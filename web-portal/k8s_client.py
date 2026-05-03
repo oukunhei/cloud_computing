@@ -319,6 +319,11 @@ class K8sClient:
                 'expected': portal_role in ('admin', 'developer')
             },
             {
+                'label': 'Create deployments in another namespace',
+                'args': ['create', 'deployments.apps', '-n', 'kube-system'],
+                'expected': False
+            },
+            {
                 'label': 'Read secrets',
                 'args': ['get', 'secrets', '-n', namespace],
                 'expected': portal_role == 'admin'

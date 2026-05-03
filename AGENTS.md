@@ -167,6 +167,7 @@ All YAMLs in `rbac/`, `resources/`, and `networkpolicies/` are **templates** pro
 
 ### Kubernetes Patterns
 - **Least-privilege RBAC**: Kubernetes RBAC is additive and has no explicit deny rule. Developer/viewer roles omit sensitive permissions instead of trying to deny them.
+- **Portal admin scoping**: `admin` with no selected namespace is treated as platform admin. `admin` with a selected namespace is a tenant admin and must pass `can_use_namespace()` before any namespace-scoped portal API operation.
 - **Template substitution**: `onboard-team.sh` uses `sed` to inject the tenant namespace and user names into YAML manifests before applying them.
 
 ---
@@ -183,8 +184,8 @@ All YAMLs in `rbac/`, `resources/`, and `networkpolicies/` are **templates** pro
 | GET | `/permissions` | RBAC matrix page |
 | GET | `/api/cluster/info` | JSON: nodes, namespaces, pods counts |
 | GET | `/api/tenants` | JSON: list of non-system namespaces |
-| POST | `/api/tenants` | JSON: create tenant (`{"name": "..."}`) |
-| DELETE | `/api/tenants/<name>` | JSON: delete tenant namespace |
+| POST | `/api/tenants` | JSON: create tenant (`{"name": "..."}`); platform admin only |
+| DELETE | `/api/tenants/<name>` | JSON: delete tenant namespace; platform admin only |
 | GET | `/api/namespaces/<namespace>/resources` | JSON: quota, limitrange, pods, netpols |
 | GET | `/api/namespaces/<namespace>/kubeconfig?role=dev|view` | Download kubeconfig YAML |
 
