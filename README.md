@@ -343,28 +343,46 @@ python app.py
 
 ## Resource Isolation Design
 
+Although the project requirement only asks for either `ResourceQuota` or `LimitRange`, this platform implements both because they solve different multi-tenant risks:
+
+- `ResourceQuota` caps total namespace consumption so tenants share the cluster fairly.
+- `LimitRange` applies per-container, per-pod, and per-PVC defaults and bounds so accidental misconfiguration is rejected early.
+
+Together, they prevent both resource exhaustion and unsafe workload specifications.
+
 ### ResourceQuota per Tenant
 
 | Resource | Hard Limit |
 |----------|-----------|
 | requests.cpu | 2 |
 | requests.memory | 4Gi |
+| requests.ephemeral-storage | 8Gi |
 | limits.cpu | 4 |
 | limits.memory | 8Gi |
+| limits.ephemeral-storage | 16Gi |
+| requests.storage | 20Gi |
 | pods | 20 |
 | services | 10 |
+| services.nodeports | 0 |
+| services.loadbalancers | 0 |
 | persistentvolumeclaims | 5 |
+| count/deployments.apps | 10 |
+| count/statefulsets.apps | 3 |
+| count/jobs.batch | 10 |
+| count/cronjobs.batch | 5 |
+| count/ingresses.networking.k8s.io | 5 |
 
-### LimitRange Defaults
+### LimitRange Guardrails
 
-| Field | Value | Purpose |
-|-------|-------|---------|
-| default.cpu | 500m | Prevents unlimited CPU usage |
-| default.memory | 1Gi | Prevents unlimited memory usage |
-| defaultRequest.cpu | 200m | Sensible baseline for scheduling |
-| defaultRequest.memory | 256Mi | Sensible baseline for scheduling |
-| max.cpu | 2 | Prevents single pod from dominating |
-| max.memory | 4Gi | Prevents single pod from dominating |
+| Type | Guardrail | Value | Purpose |
+|------|-----------|-------|---------|
+| Container | default request | cpu 200m, memory 256Mi, ephemeral-storage 512Mi | Makes pods without explicit requests schedulable and quota-counted |
+| Container | default limit | cpu 500m, memory 1Gi, ephemeral-storage 1Gi | Prevents unlimited containers |
+| Container | max | cpu 2, memory 4Gi, ephemeral-storage 4Gi | Stops one container from dominating a tenant |
+| Container | min | cpu 50m, memory 64Mi, ephemeral-storage 128Mi | Rejects unrealistic tiny specs |
+| Container | maxLimitRequestRatio | cpu 4, memory 4 | Prevents huge burst limits over tiny requests |
+| Pod | max | cpu 2, memory 4Gi, ephemeral-storage 6Gi | Catches oversized multi-container pods |
+| PVC | min / max | 1Gi / 10Gi | Prevents tiny unusable claims and oversized single claims |
 
 ---
 
@@ -469,7 +487,7 @@ kubectl exec -it <pod> -- /bin/sh
 ```bash
 export KUBECONFIG=./team-alpha-dev-kubeconfig
 kubectl apply -f demo/test-quota-pod.yaml
-# Expected: Error from server (Forbidden): exceeded quota
+# Expected: the first pods may be accepted, then a later pod is denied with "exceeded quota"
 ```
 
 ### 4. Verify LimitRange Defaults

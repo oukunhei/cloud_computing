@@ -266,16 +266,20 @@ async function loadNamespaceResources() {
         // LimitRange
         const limitBody = document.getElementById('limit-body');
         if (data.limitrange) {
-            const limits = data.limitrange.limits[0];
             let html = '<table class="table table-sm">';
-            html += '<thead><tr><th>Type</th><th>Default</th><th>Default Request</th><th>Min</th><th>Max</th></tr></thead><tbody>';
-            html += `<tr>
-                <td><code>${limits.type}</code></td>
-                <td>CPU: ${limits.default?.cpu || '-'}<br>Mem: ${limits.default?.memory || '-'}</td>
-                <td>CPU: ${limits.defaultRequest?.cpu || '-'}<br>Mem: ${limits.defaultRequest?.memory || '-'}</td>
-                <td>CPU: ${limits.min?.cpu || '-'}<br>Mem: ${limits.min?.memory || '-'}</td>
-                <td>CPU: ${limits.max?.cpu || '-'}<br>Mem: ${limits.max?.memory || '-'}</td>
-            </tr>`;
+            html += '<thead><tr><th>Type</th><th>Default</th><th>Default Request</th><th>Min</th><th>Max</th><th>Max Ratio</th></tr></thead><tbody>';
+            html += data.limitrange.limits.map(limit => {
+                const defaultRequest = limit.defaultRequest || limit.default_request;
+                const ratio = limit.maxLimitRequestRatio || limit.max_limit_request_ratio;
+                return `<tr>
+                    <td><code>${limit.type}</code></td>
+                    <td>${formatResourceMap(limit.default)}</td>
+                    <td>${formatResourceMap(defaultRequest)}</td>
+                    <td>${formatResourceMap(limit.min)}</td>
+                    <td>${formatResourceMap(limit.max)}</td>
+                    <td>${formatResourceMap(ratio)}</td>
+                </tr>`;
+            }).join('');
             html += '</tbody></table>';
             limitBody.innerHTML = html;
         } else {
@@ -325,6 +329,13 @@ function parsePercent(used, hard) {
     const h = parseFloat(hard);
     if (isNaN(u) || isNaN(h) || h === 0) return 0;
     return Math.min(100, Math.round((u / h) * 100));
+}
+
+function formatResourceMap(values) {
+    if (!values || Object.keys(values).length === 0) return '-';
+    return Object.entries(values)
+        .map(([key, value]) => `<code>${key}</code>: ${value}`)
+        .join('<br>');
 }
 </script>
 {% endblock %}

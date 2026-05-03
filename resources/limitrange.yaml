@@ -3,18 +3,48 @@ kind: LimitRange
 metadata:
   name: mem-cpu-limit
   namespace: default
+  labels:
+    tenant.lab/control: limit-range
+  annotations:
+    tenant.lab/purpose: "Apply safe defaults and per-object bounds so tenant workloads are schedulable and predictable."
 spec:
   limits:
-  - default:
+  # Per-container defaults prevent pods without resource specs from bypassing quota accounting.
+  - type: Container
+    default:
       cpu: "500m"
       memory: "1Gi"
+      ephemeral-storage: "1Gi"
     defaultRequest:
       cpu: "200m"
       memory: "256Mi"
+      ephemeral-storage: "512Mi"
     max:
       cpu: "2"
       memory: "4Gi"
+      ephemeral-storage: "4Gi"
     min:
       cpu: "50m"
       memory: "64Mi"
-    type: Container
+      ephemeral-storage: "128Mi"
+    maxLimitRequestRatio:
+      cpu: "4"
+      memory: "4"
+
+  # Per-pod bounds catch oversized multi-container pods before they consume a tenant's quota.
+  - type: Pod
+    max:
+      cpu: "2"
+      memory: "4Gi"
+      ephemeral-storage: "6Gi"
+    min:
+      cpu: "50m"
+      memory: "64Mi"
+      ephemeral-storage: "128Mi"
+
+  # PVC bounds prevent a single claim from consuming the whole namespace storage budget.
+  - type: PersistentVolumeClaim
+    max:
+      storage: "10Gi"
+    min:
+      storage: "1Gi"

@@ -3,14 +3,34 @@ kind: ResourceQuota
 metadata:
   name: team-quota
   namespace: default
+  labels:
+    tenant.lab/control: resource-quota
+  annotations:
+    tenant.lab/purpose: "Cap total namespace usage so one team cannot exhaust shared cluster capacity."
 spec:
   hard:
+    # Compute budget for the whole tenant namespace.
     requests.cpu: "2"
     requests.memory: "4Gi"
+    requests.ephemeral-storage: "8Gi"
     limits.cpu: "4"
     limits.memory: "8Gi"
+    limits.ephemeral-storage: "16Gi"
+
+    # Storage budget for tenant PVC usage.
+    requests.storage: "20Gi"
     persistentvolumeclaims: "5"
+
+    # Object-count quotas prevent accidental controller or service sprawl.
     pods: "20"
     services: "10"
+    services.nodeports: "0"
+    services.loadbalancers: "0"
     configmaps: "20"
     secrets: "20"
+    count/deployments.apps: "10"
+    count/replicasets.apps: "20"
+    count/statefulsets.apps: "3"
+    count/jobs.batch: "10"
+    count/cronjobs.batch: "5"
+    count/ingresses.networking.k8s.io: "5"
