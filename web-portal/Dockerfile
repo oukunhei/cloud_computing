@@ -3,6 +3,8 @@ FROM python:3.11-slim
 WORKDIR /app
 
 ARG TARGETARCH
+ARG KUBECTL_VERSION=v1.30.6
+ARG KUBECTL_BASE_URL=https://dl.k8s.io/release
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -10,18 +12,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Install kubectl at build time so tenant onboarding works even if runtime
-# container networking cannot reach dl.k8s.io.
-RUN set -eux; \
+# Install kubectl at build time when the configured download endpoint is
+# reachable. Do not fail the whole image build if the CDN is blocked; the
+# portal can still start and the entrypoint has a runtime fallback.
+RUN set -u; \
     arch="${TARGETARCH:-amd64}"; \
     case "$arch" in \
       amd64|arm64) ;; \
       *) echo "Unsupported architecture for kubectl: $arch" >&2; exit 1 ;; \
     esac; \
-    kube_version="$(curl -fsSL https://dl.k8s.io/release/stable.txt)"; \
-    curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/${kube_version}/bin/linux/${arch}/kubectl"; \
-    chmod 0755 /usr/local/bin/kubectl; \
-    kubectl version --client=true
+    kubectl_url="${KUBECTL_BASE_URL}/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl"; \
+    echo "Downloading kubectl from ${kubectl_url}"; \
+    if curl -fSL --retry 3 --connect-timeout 10 --max-time 120 -o /usr/local/bin/kubectl "${kubectl_url}"; then \
+        chmod 0755 /usr/local/bin/kubectl; \
+        kubectl version --client=true; \
+    else \
+        echo "WARNING: Could not download kubectl during image build. The portal will still build."; \
+        rm -f /usr/local/bin/kubectl; \
+    fi
 
 # Install Python dependencies
 COPY web-portal/requirements.txt /app/requirements.txt

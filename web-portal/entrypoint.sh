@@ -5,17 +5,16 @@ set -e
 # manually rebuilt images or unusual base-image changes.
 if ! command -v kubectl >/dev/null 2>&1; then
     echo "⏳ kubectl not found in container, installing matching version..."
-    KUBE_VERSION=$(curl -L -s --max-time 10 --connect-timeout 5 https://dl.k8s/release/stable.txt || true)
-    if [ -z "$KUBE_VERSION" ]; then
-        echo "⚠️  WARNING: Could not fetch kubectl version (network issue). Skipping kubectl installation."
+    KUBE_VERSION="${KUBECTL_VERSION:-v1.30.6}"
+    KUBECTL_BASE_URL="${KUBECTL_BASE_URL:-https://dl.k8s.io/release}"
+    KUBECTL_ARCH="$(dpkg --print-architecture)"
+    KUBECTL_URL="${KUBECTL_BASE_URL}/${KUBE_VERSION}/bin/linux/${KUBECTL_ARCH}/kubectl"
+    if curl -fL --retry 3 --max-time 120 --connect-timeout 10 -o /tmp/kubectl "$KUBECTL_URL" 2>/dev/null; then
+        install -o root -g root -m 0755 /tmp/kubectl /usr/local/bin/kubectl
+        rm -f /tmp/kubectl
+        echo "✅ kubectl ${KUBE_VERSION} installed."
     else
-        if curl -LO --max-time 30 --connect-timeout 10 "https://dl.k8s/release/${KUBE_VERSION}/bin/linux/amd64/kubectl" 2>/dev/null; then
-            install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-            rm -f kubectl
-            echo "✅ kubectl ${KUBE_VERSION} installed."
-        else
-            echo "⚠️  WARNING: Failed to download kubectl. Skipping installation."
-        fi
+        echo "⚠️  WARNING: Failed to download kubectl from ${KUBECTL_URL}. Tenant onboarding and kubeconfig generation may fail."
     fi
 fi
 

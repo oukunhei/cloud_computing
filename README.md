@@ -530,6 +530,7 @@ docker-compose down
 |---------|----------|
 | `kubectl` permission denied | Ensure `~/.kube/config` has correct content, or use `sudo k3s kubectl` |
 | `docker-compose: command not found` | Install standalone Compose or run `docker compose up -d --build` with the Compose plugin |
+| Docker build fails with `curl exit code 56` while downloading `kubectl` | Network/CDN issue. Set `KUBECTL_BASE_URL=https://mirrors.aliyun.com/kubernetes-release/release` in `.env`, then rebuild with `docker compose build --no-cache web` |
 | `/host/kubeconfig not found` | Create `.env` and set `KUBECONFIG_HOST_PATH` to your kubeconfig path |
 | NetworkPolicy not working | Verify Calico is running: `kubectl get pods -n calico-system` |
 | Web portal shows "Disconnected" | Check K3s status: `sudo systemctl status k3s`. Ensure `/etc/rancher/k3s/k3s.yaml` exists |
