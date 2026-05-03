@@ -9,15 +9,15 @@ A lightweight, secure, multi-tenant Kubernetes lab platform built on K3s with RB
 ## Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     K3s Cluster                              │
+┌────────────────────────────────────────────────────────────┐
+│                     K3s Cluster                            │
 │  ┌─────────────────────────────────────────────────────┐   │
-│  │              Web Portal (Flask)                      │   │
-│  │  Dashboard | Tenant Mgmt | Kubeconfig | Permissions  │   │
+│  │              Web Portal (Flask)                     │   │
+│  │  Dashboard | Tenant Mgmt | Kubeconfig | Permissions │   │
 │  └─────────────────────────────────────────────────────┘   │
-│                           │                                  │
-│  ┌────────────────────────┼─────────────────────────────┐   │
-│  │                        ▼                              │   │
+│                           │                                │
+│  ┌────────────────────────┼────────────────────────────┐   │
+│  │                        ▼                            │   │
 │  │  ┌──────────┐   ┌──────────┐   ┌──────────┐         │   │
 │  │  │ team-α   │   │ team-β   │   │ team-γ   │  ...    │   │
 │  │  │ Namespace│   │ Namespace│   │ Namespace│         │   │
@@ -29,10 +29,10 @@ A lightweight, secure, multi-tenant Kubernetes lab platform built on K3s with RB
 │  │  │ Quota    │   │ Quota    │   │ Quota    │         │   │
 │  │  │ NetPol   │   │ NetPol   │   │ NetPol   │         │   │
 │  │  └──────────┘   └──────────┘   └──────────┘         │   │
-│  │                                                       │   │
-│  │  Isolation: RBAC + ResourceQuota + NetworkPolicy     │   │
+│  │                                                     │   │
+│  │  Isolation: RBAC + ResourceQuota + NetworkPolicy    │   │
 │  └─────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────┘
 ```
 
 ### Security Layers (Defense in Depth)
