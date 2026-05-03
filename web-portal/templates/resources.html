@@ -14,8 +14,8 @@
         <h2><i class="bi bi-graph-up me-2"></i>Namespace: <code>{{ namespace }}</code></h2>
         <p class="text-muted mb-0">
             Current portal role:
-            <span class="badge {% if identity.role == 'admin' %}bg-danger{% elif identity.role == 'developer' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">
-                {{ identity.role | capitalize }}
+            <span class="badge {% if identity.role == 'cluster-admin' %}bg-primary{% elif identity.role == 'admin' %}bg-danger{% elif identity.role == 'developer' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">
+                {{ identity.display_role }}
             </span>
             {% if identity.namespace %}
             scoped to <code>{{ identity.namespace }}</code>
@@ -33,7 +33,12 @@
                 <span class="badge bg-light text-dark">Live Kubernetes API actions</span>
             </div>
             <div class="card-body">
-                {% if identity.role == 'viewer' %}
+                {% if identity.role == 'cluster-admin' %}
+                <div class="alert alert-primary mb-3">
+                    <i class="bi bi-diagram-3 me-2"></i>
+                    Cluster admin manages tenant lifecycle. Use tenant admin kubeconfig to demonstrate namespace-local workload and RBAC control.
+                </div>
+                {% elif identity.role == 'viewer' %}
                 <div class="alert alert-info mb-3">
                     <i class="bi bi-eye me-2"></i>
                     Viewer can inspect resources and run permission checks, but workload write buttons are intentionally disabled.
@@ -46,16 +51,16 @@
                 {% else %}
                 <div class="alert alert-danger mb-3">
                     <i class="bi bi-shield-lock me-2"></i>
-                    Admin can create and delete <code>lab-demo-admin</code>; namespace lifecycle is still a platform-admin action.
+                    Tenant admin can create and delete <code>lab-demo-admin</code>, and can manage RBAC, quotas, limit ranges, and network policies inside this namespace.
                 </div>
                 {% endif %}
 
                 <div class="d-flex flex-wrap gap-2 mb-3">
-                    <button class="btn btn-success" onclick="createDemoWorkload()" {% if identity.role == 'viewer' %}disabled{% endif %}>
-                        <i class="bi bi-plus-circle me-1"></i>Create {{ identity.role | capitalize }} Demo
+                    <button class="btn btn-success" onclick="createDemoWorkload()" {% if identity.role in ['viewer', 'cluster-admin'] %}disabled{% endif %}>
+                        <i class="bi bi-plus-circle me-1"></i>Create {{ identity.display_role }} Demo
                     </button>
-                    <button class="btn btn-outline-danger" onclick="deleteDemoWorkload()" {% if identity.role == 'viewer' %}disabled{% endif %}>
-                        <i class="bi bi-trash me-1"></i>Delete {{ identity.role | capitalize }} Demo
+                    <button class="btn btn-outline-danger" onclick="deleteDemoWorkload()" {% if identity.role in ['viewer', 'cluster-admin'] %}disabled{% endif %}>
+                        <i class="bi bi-trash me-1"></i>Delete {{ identity.display_role }} Demo
                     </button>
                     <button class="btn btn-outline-primary" onclick="runPermissionChecks()">
                         <i class="bi bi-shield-check me-1"></i>Run Permission Checks

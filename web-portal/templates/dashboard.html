@@ -7,19 +7,27 @@
         <h2><i class="bi bi-speedometer2 me-2"></i>Cluster Dashboard</h2>
         <p class="text-muted">
             Overview of your multi-tenant K3s cluster.
-            Current role: <strong>{{ identity.role | capitalize }}</strong>
+            Current role: <strong>{{ identity.display_role }}</strong>
             {% if identity.namespace %}for tenant <code>{{ identity.namespace }}</code>{% endif %}
         </p>
     </div>
 </div>
 
-{% if identity.role == 'viewer' %}
+{% if identity.role == 'cluster-admin' %}
+<div class="alert alert-primary">
+    <i class="bi bi-diagram-3 me-2"></i>Cluster admin mode can create/delete tenant namespaces and inspect all tenants.
+</div>
+{% elif identity.role == 'viewer' %}
 <div class="alert alert-info">
     <i class="bi bi-eye me-2"></i>Viewer mode is read-only. Workload creation, tenant deletion, exec, and port-forward are intentionally unavailable.
 </div>
 {% elif identity.role == 'developer' %}
 <div class="alert alert-warning">
     <i class="bi bi-terminal me-2"></i>Developer mode can manage workloads in its namespace, but cannot manage tenants, RBAC, quotas, secrets, or network policies.
+</div>
+{% elif identity.role == 'admin' %}
+<div class="alert alert-danger">
+    <i class="bi bi-shield-lock me-2"></i>Tenant admin mode can manage workloads, RBAC, quotas, limit ranges, and network policies inside its namespace.
 </div>
 {% endif %}
 

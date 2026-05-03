@@ -8,7 +8,7 @@ from config import ROLE_PERMISSIONS, FLASK_PORT, SECRET_KEY
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.secret_key = SECRET_KEY
 DNS_LABEL_RE = re.compile(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
-VALID_ROLES = {'admin', 'developer', 'viewer'}
+VALID_ROLES = {'cluster-admin', 'admin', 'developer', 'viewer'}
 
 
 def current_identity():
@@ -17,7 +17,9 @@ def current_identity():
         'role': session.get('role'),
         'namespace': namespace,
         'is_logged_in': bool(session.get('role')),
-        'is_platform_admin': is_platform_admin()
+        'is_platform_admin': is_platform_admin(),
+        'is_tenant_admin': session.get('role') == 'admin',
+        'display_role': display_role(session.get('role'))
     }
 
 
@@ -34,13 +36,27 @@ def require_admin_api(view):
     @wraps(view)
     def wrapped(*args, **kwargs):
         if not is_platform_admin():
-            return jsonify({'error': 'Only platform admin can perform this action. Tenant admins are scoped to their own namespace.'}), 403
+            return jsonify({'error': 'Only cluster admin can perform this action. Tenant admins are scoped to their own namespace.'}), 403
         return view(*args, **kwargs)
     return wrapped
 
 
 def is_platform_admin():
-    return session.get('role') == 'admin' and not session.get('namespace')
+    return session.get('role') == 'cluster-admin'
+
+
+def can_manage_namespace_controls():
+    return is_platform_admin() or session.get('role') == 'admin'
+
+
+def display_role(role):
+    labels = {
+        'cluster-admin': 'Cluster Admin',
+        'admin': 'Tenant Admin',
+        'developer': 'Developer',
+        'viewer': 'Viewer'
+    }
+    return labels.get(role, role or '')
 
 
 def can_use_namespace(namespace):
@@ -65,7 +81,7 @@ def require_workload_write(view):
     @wraps(view)
     def wrapped(namespace, *args, **kwargs):
         if session.get('role') not in ('admin', 'developer'):
-            return jsonify({'error': 'Viewer is read-only and cannot create or delete workloads.'}), 403
+            return jsonify({'error': f'{display_role(session.get("role"))} cannot create or delete tenant workloads from this portal action.'}), 403
         if not can_use_namespace(namespace):
             return jsonify({
                 'error': f'Your simulated {session.get("role")} session is scoped to namespace {session.get("namespace")}.'
@@ -106,11 +122,18 @@ def login():
                 error='Namespace must be DNS-compatible.'
             ), 400
 
-        if role in ('developer', 'viewer') and not namespace:
+        if role == 'cluster-admin' and namespace:
             return render_template(
                 'login.html',
                 roles=ROLE_PERMISSIONS,
-                error='Developer and viewer sessions must be scoped to a tenant namespace.'
+                error='Cluster admin is not scoped to a tenant namespace. Leave namespace empty.'
+            ), 400
+
+        if role in ('admin', 'developer', 'viewer') and not namespace:
+            return render_template(
+                'login.html',
+                roles=ROLE_PERMISSIONS,
+                error='Tenant admin, developer, and viewer sessions must be scoped to a tenant namespace.'
             ), 400
 
         session['role'] = role
@@ -230,10 +253,9 @@ def api_get_resource_settings(namespace):
 @app.route('/api/namespaces/<namespace>/resource-settings', methods=['POST'])
 @require_login
 @require_namespace_access
-@require_admin_api
 def api_update_resource_settings(namespace):
-    if not is_platform_admin():
-        return jsonify({'error': 'Only platform admin can change ResourceQuota and LimitRange. Tenant admins can inspect them but cannot weaken platform guardrails.'}), 403
+    if not can_manage_namespace_controls():
+        return jsonify({'error': 'Only cluster admin or tenant admin can change ResourceQuota and LimitRange.'}), 403
     data = request.get_json() or {}
     try:
         message = k8s.update_resource_settings(namespace, data)

@@ -298,6 +298,7 @@ class K8sClient:
             )
 
         suffix_by_role = {
+            'cluster-admin': 'admin',
             'admin': 'admin',
             'developer': 'dev',
             'viewer': 'view'
@@ -316,7 +317,7 @@ class K8sClient:
             {
                 'label': 'Create deployments',
                 'args': ['create', 'deployments.apps', '-n', namespace],
-                'expected': portal_role in ('admin', 'developer')
+                'expected': portal_role in ('cluster-admin', 'admin', 'developer')
             },
             {
                 'label': 'Create deployments in another namespace',
@@ -326,22 +327,32 @@ class K8sClient:
             {
                 'label': 'Read secrets',
                 'args': ['get', 'secrets', '-n', namespace],
-                'expected': portal_role == 'admin'
+                'expected': portal_role in ('cluster-admin', 'admin')
             },
             {
                 'label': 'Read ResourceQuota',
                 'args': ['get', 'resourcequotas', '-n', namespace],
-                'expected': portal_role == 'admin'
+                'expected': portal_role in ('cluster-admin', 'admin')
+            },
+            {
+                'label': 'Modify ResourceQuota',
+                'args': ['update', 'resourcequotas', '-n', namespace],
+                'expected': portal_role in ('cluster-admin', 'admin')
+            },
+            {
+                'label': 'Modify NetworkPolicy',
+                'args': ['update', 'networkpolicies.networking.k8s.io', '-n', namespace],
+                'expected': portal_role in ('cluster-admin', 'admin')
             },
             {
                 'label': 'Modify RBAC roles',
                 'args': ['create', 'roles.rbac.authorization.k8s.io', '-n', namespace],
-                'expected': portal_role == 'admin'
+                'expected': portal_role in ('cluster-admin', 'admin')
             },
             {
                 'label': 'Exec into pods',
                 'args': ['create', 'pods/exec', '-n', namespace],
-                'expected': portal_role in ('admin', 'developer')
+                'expected': portal_role in ('cluster-admin', 'admin', 'developer')
             },
             {
                 'label': 'Delete namespaces',

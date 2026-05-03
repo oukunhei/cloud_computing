@@ -8,8 +8,8 @@
         <p class="text-muted mb-0">
             Tune tenant ResourceQuota and LimitRange settings from the portal.
             Current role:
-            <span class="badge {% if identity.role == 'admin' %}bg-danger{% elif identity.role == 'developer' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">
-                {{ identity.role | capitalize }}
+            <span class="badge {% if identity.role == 'cluster-admin' %}bg-primary{% elif identity.role == 'admin' %}bg-danger{% elif identity.role == 'developer' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">
+                {{ identity.display_role }}
             </span>
         </p>
     </div>
@@ -18,12 +18,17 @@
 {% if identity.is_platform_admin %}
 <div class="alert alert-danger">
     <i class="bi bi-shield-lock me-2"></i>
-    Platform admin mode can save changes directly to Kubernetes. Use conservative values for shared lab clusters.
+    Cluster admin mode can update ResourceQuota and LimitRange for any tenant namespace.
+</div>
+{% elif identity.is_tenant_admin %}
+<div class="alert alert-warning">
+    <i class="bi bi-shield-lock me-2"></i>
+    Tenant admin mode can update ResourceQuota and LimitRange inside <code>{{ identity.namespace }}</code>.
 </div>
 {% else %}
 <div class="alert alert-info">
     <i class="bi bi-eye me-2"></i>
-    {{ identity.role | capitalize }} mode is read-only here. You can inspect tenant limits, but only platform admin can save resource policy changes.
+    {{ identity.display_role }} mode is read-only here. You can inspect tenant limits, but only cluster admin or tenant admin can save resource policy changes.
 </div>
 {% endif %}
 
@@ -148,7 +153,7 @@
 
             <div class="d-flex justify-content-between align-items-center">
                 <div id="save-result" class="small text-muted"></div>
-                <button type="button" class="btn btn-success" onclick="saveSettings()" {% if not identity.is_platform_admin %}disabled{% endif %}>
+                <button type="button" class="btn btn-success" onclick="saveSettings()" {% if not (identity.is_platform_admin or identity.is_tenant_admin) %}disabled{% endif %}>
                     <i class="bi bi-cloud-arrow-up me-1"></i>Save to Kubernetes
                 </button>
             </div>
@@ -159,7 +164,7 @@
 
 {% block scripts %}
 <script>
-const READ_ONLY = {{ 'false' if identity.is_platform_admin else 'true' }};
+const READ_ONLY = {{ 'false' if identity.is_platform_admin or identity.is_tenant_admin else 'true' }};
 
 document.addEventListener('DOMContentLoaded', async () => {
     await loadTenants();
@@ -202,7 +207,7 @@ async function loadSettings() {
 
     document.getElementById('settings-form').classList.remove('d-none');
     document.getElementById('save-result').textContent = READ_ONLY
-        ? 'Read-only view. Log in as admin to save changes.'
+        ? 'Read-only view. Log in as cluster admin or tenant admin to save changes.'
         : 'Changes are not applied until saved.';
     setReadonlyState();
 }

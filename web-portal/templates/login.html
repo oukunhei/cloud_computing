@@ -23,7 +23,8 @@
                                 <div class="mb-3">
                                     <label class="form-label">Role</label>
                                     <select class="form-select form-select-lg" name="role" id="role-select-login" required>
-                                        <option value="admin">Admin - platform or tenant operations</option>
+                                        <option value="cluster-admin">Cluster Admin - tenant lifecycle</option>
+                                        <option value="admin">Tenant Admin - namespace administration</option>
                                         <option value="developer">Developer - deploy workloads</option>
                                         <option value="viewer">Viewer - read-only inspection</option>
                                     </select>
@@ -31,7 +32,7 @@
                                 <div class="mb-4">
                                     <label class="form-label">Tenant Namespace</label>
                                     <input class="form-control form-control-lg" name="namespace" placeholder="e.g. team-alpha">
-                                    <div class="form-text">Leave empty only for platform admin. Set a namespace for tenant admin, developer, or viewer.</div>
+                                    <div class="form-text">Leave empty only for cluster admin. Set a namespace for tenant admin, developer, or viewer.</div>
                                 </div>
                                 <button class="btn btn-dark btn-lg w-100" type="submit">
                                     <i class="bi bi-box-arrow-in-right me-2"></i>Enter Portal
@@ -47,7 +48,9 @@
                             <div class="card h-100 role-card role-card-{{ role_name }}">
                                 <div class="card-body">
                                     <div class="role-icon mb-3">
-                                        {% if role_name == 'admin' %}
+                                        {% if role_name == 'cluster-admin' %}
+                                        <i class="bi bi-diagram-3-fill"></i>
+                                        {% elif role_name == 'admin' %}
                                         <i class="bi bi-shield-fill-check"></i>
                                         {% elif role_name == 'developer' %}
                                         <i class="bi bi-terminal-fill"></i>
@@ -55,7 +58,7 @@
                                         <i class="bi bi-eye-fill"></i>
                                         {% endif %}
                                     </div>
-                                    <h4 class="text-capitalize">{{ role_name }}</h4>
+                                    <h4>{% if role_name == 'cluster-admin' %}Cluster Admin{% elif role_name == 'admin' %}Tenant Admin{% else %}{{ role_name | capitalize }}{% endif %}</h4>
                                     <p class="small text-muted">{{ role_info.description }}</p>
                                     <hr>
                                     <p class="small mb-2"><strong>Can write:</strong></p>
@@ -69,8 +72,7 @@
                     </div>
                     <div class="alert alert-info mt-3 mb-0">
                         <i class="bi bi-lightbulb me-2"></i>
-                        After logging in, use the same tenant name to download a matching kubeconfig and verify
-                        the role with real `kubectl auth can-i` commands.
+                        Tenant roles use a namespace-scoped kubeconfig. Cluster admin manages tenant lifecycle from the portal.
                     </div>
                 </div>
             </div>

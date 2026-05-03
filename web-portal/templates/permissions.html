@@ -14,10 +14,14 @@
     <div class="col">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center
-                {% if role_name == 'admin' %}bg-danger text-white
+                {% if role_name == 'cluster-admin' %}bg-primary text-white
+                {% elif role_name == 'admin' %}bg-danger text-white
                 {% elif role_name == 'developer' %}bg-warning
                 {% else %}bg-info text-white{% endif %}">
-                <span class="fs-5"><i class="bi bi-person-badge me-2"></i>{{ role_name | capitalize }}</span>
+                <span class="fs-5">
+                    <i class="bi bi-person-badge me-2"></i>
+                    {% if role_name == 'cluster-admin' %}Cluster Admin{% elif role_name == 'admin' %}Tenant Admin{% else %}{{ role_name | capitalize }}{% endif %}
+                </span>
                 <span class="badge bg-light text-dark">{{ role_info.description }}</span>
             </div>
             <div class="card-body">
@@ -76,6 +80,7 @@
             <div class="card-body">
                 <ul class="mb-0">
                     <li><strong>Developer</strong> cannot access <code>secrets</code> to prevent credential leakage if their kubeconfig is compromised.</li>
+                    <li><strong>Tenant Admin</strong> can modify RBAC, quotas, limit ranges, and network policies inside its own namespace.</li>
                     <li><strong>Developer</strong> cannot modify RBAC, quotas, or network policies because those permissions are not granted; Kubernetes RBAC is additive and has no explicit deny.</li>
                     <li><strong>Viewer</strong> cannot execute commands in pods or port-forward, preventing unauthorized access to running applications.</li>
                     <li><strong>NetworkPolicy</strong> enforces isolation at the network layer, independent of RBAC.</li>

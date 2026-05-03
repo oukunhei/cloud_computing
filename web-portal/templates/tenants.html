@@ -17,8 +17,8 @@
 {% if not identity.is_platform_admin %}
 <div class="alert alert-warning">
     <i class="bi bi-lock me-2"></i>
-    You are logged in as <strong>{{ identity.role }}</strong>{% if identity.namespace %} scoped to <code>{{ identity.namespace }}</code>{% endif %}.
-    Tenant creation and deletion require platform admin.
+    You are logged in as <strong>{{ identity.display_role }}</strong>{% if identity.namespace %} scoped to <code>{{ identity.namespace }}</code>{% endif %}.
+    Tenant creation and deletion require cluster admin.
 </div>
 {% endif %}
 

@@ -89,25 +89,26 @@ Isolation is enforced through **three complementary layers** (defense in depth):
 
 ### 3. RBAC Design
 
-The platform implements a **three-tier RBAC model** using Kubernetes native `Role` and `RoleBinding` resources:
+The platform implements a **four-tier operations model**. `Cluster Admin` is the platform operator role used by the portal for tenant lifecycle actions. `Admin`, `Developer`, and `Viewer` are Kubernetes tenant roles implemented with native `Role` and `RoleBinding` resources:
 
 | Role | Read | Write | Exec/PortForward | Not Granted / Restricted |
 |------|------|-------|------------------|-------------------|
-| **Admin** | All namespaced resources in its own tenant namespace | All namespaced resources in its own tenant namespace | Yes | Other tenant namespaces, cluster-scoped resources, namespace deletion |
+| **Cluster Admin** | All tenants | Create/delete namespaces, manage all tenants | No tenant workload demo | Day-to-day tenant workload ownership |
+| **Tenant Admin** | All namespaced resources in its own tenant namespace | Workloads, RBAC, ResourceQuota, LimitRange, NetworkPolicy | Yes | Other tenant namespaces, cluster-scoped resources, namespace deletion |
 | **Developer** | Pods, logs, Deployments, Services, ConfigMaps, Ingresses, Events, HPA, Jobs | Workloads and app-facing resources | Yes | `secrets`, RBAC, quotas, limit ranges, network policies |
 | **Viewer** | Pods, logs, Deployments, Services, ConfigMaps, Ingresses, Events, HPA, Jobs | — | No | write verbs, exec, port-forward, secrets, RBAC |
 
 **Why this matters**: Developers cannot read `secrets` (mitigates credential leakage if kubeconfig is lost) and cannot modify platform-level controls (prevents privilege escalation). Viewers are strictly read-only and cannot exec into pods.
 
-**Portal admin scoping**: The web portal distinguishes **platform admin** from **tenant admin**. Logging in as `admin` without a namespace is a platform-admin demo session that can create/delete tenants and update shared guardrails. Logging in as `admin` with a namespace, such as `team-alpha`, is a tenant-admin session and is restricted by the portal API to that namespace only; it cannot create demo workloads, download kubeconfigs, or change settings for another namespace.
+**Portal admin scoping**: The web portal distinguishes **Cluster Admin** from **Tenant Admin** explicitly. Logging in as `cluster-admin` requires no namespace and can create/delete tenant namespaces. Logging in as `admin` requires a namespace, such as `team-alpha`, and can manage namespace-local resources, RBAC, ResourceQuota, LimitRange, and NetworkPolicy only inside that tenant.
 
 ### 4. Platform-Style Kubernetes Design
 
 Rather than a collection of manual `kubectl` commands, this project is designed as a **mini PaaS (Platform as a Service)**:
 
 - **Automation Layer**: `onboard-team.sh` encapsulates all provisioning logic (namespace, RBAC, quota, netpol, kubeconfig generation) into an idempotent-like workflow.
-- **Management Portal**: A Flask-based web UI provides **Dashboard** (cluster telemetry), **Tenant Management** (platform-admin CRUD), **Resource Monitor** (quota usage, pod list), **Kubeconfig Generator** (TokenRequest API), and **Permissions Viewer** (RBAC matrix).
-- **Role Login Demo**: The portal starts with a simulated `admin` / `developer` / `viewer` login screen so evaluators can see how different roles experience the platform.
+- **Management Portal**: A Flask-based web UI provides **Dashboard** (cluster telemetry), **Tenant Management** (cluster-admin CRUD), **Resource Monitor** (quota usage, pod list), **Kubeconfig Generator** (TokenRequest API), and **Permissions Viewer** (RBAC matrix).
+- **Role Login Demo**: The portal starts with a simulated `cluster-admin` / `admin` / `developer` / `viewer` login screen so evaluators can see how different roles experience the platform.
 - **Self-Service Onboarding**: A student team can be onboarded in ~30 seconds without the platform administrator running individual `kubectl` commands.
 - **Token Lifecycle Management**: Uses the `TokenRequest` API (`kubectl create token`) instead of static ServiceAccount secrets, generating time-bound (1-year), revocable tokens per tenant role.
 
@@ -326,20 +327,21 @@ python app.py
 
 ### Three-Tier Permission Model
 
-| Capability | **Admin** | **Developer** | **Viewer** |
-|-----------|:---------:|:-------------:|:----------:|
-| Read pods, deployments, services | ✅ | ✅ | ✅ |
-| Create/Update/Delete workloads | ✅ | ✅ | ❌ |
-| Exec into pods / port-forward | ✅ | ✅ | ❌ |
-| Read events, HPA | ✅ | ✅ | ✅ |
-| Read secrets | ✅ | ❌ | ❌ |
-| Manage RBAC (roles/bindings) | ✅ | ❌ | ❌ |
-| Manage ResourceQuota | ✅ | ❌ | ❌ |
-| Manage LimitRange | ✅ | ❌ | ❌ |
-| Manage NetworkPolicy | ✅ | ❌ | ❌ |
-| Delete namespace | Platform admin only | ❌ | ❌ |
+| Capability | **Cluster Admin** | **Tenant Admin** | **Developer** | **Viewer** |
+|-----------|:-----------------:|:----------------:|:-------------:|:----------:|
+| Create/delete namespaces | ✅ | ❌ | ❌ | ❌ |
+| Manage all tenants | ✅ | ❌ | ❌ | ❌ |
+| Read pods, deployments, services | ✅ | ✅ | ✅ | ✅ |
+| Create/Update/Delete workloads | ❌ | ✅ | ✅ | ❌ |
+| Exec into pods / port-forward | ❌ | ✅ | ✅ | ❌ |
+| Read events, HPA | ✅ | ✅ | ✅ | ✅ |
+| Read secrets | ✅ | ✅ | ❌ | ❌ |
+| Manage RBAC (roles/bindings) | ❌ | ✅ | ❌ | ❌ |
+| Manage ResourceQuota | ✅ | ✅ | ❌ | ❌ |
+| Manage LimitRange | ✅ | ✅ | ❌ | ❌ |
+| Manage NetworkPolicy | ❌ | ✅ | ❌ | ❌ |
 
-> **Design Rationale**: Developers are not granted access to `secrets`, reducing credential leakage risk if their kubeconfig is compromised. They also cannot modify platform-level controls (RBAC, quotas, network policies), preventing privilege escalation or accidental breaking of isolation. Tenant admins can manage resources within their own namespace, while namespace creation/deletion remains a platform-admin action.
+> **Design Rationale**: Cluster Admin owns tenant lifecycle and platform visibility. Tenant Admin owns namespace-local administration, including RBAC, quotas, limit ranges, and network policies. Developers are not granted access to `secrets` or platform controls, reducing credential leakage and privilege-escalation risk.
 
 ---
 
@@ -468,7 +470,7 @@ kubectl get secrets
 kubectl get resourcequota
 kubectl get roles
 
-# Should FAIL because namespace lifecycle is reserved for the platform admin
+# Should FAIL because namespace lifecycle is reserved for the cluster admin
 kubectl delete namespace team-alpha
 ```
 

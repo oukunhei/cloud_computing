@@ -40,7 +40,7 @@
                 {% if identity.is_logged_in %}
                 <span class="navbar-text me-3">
                     <span class="badge bg-light text-dark">
-                        <i class="bi bi-person-circle me-1"></i>{{ identity.role | capitalize }}
+                        <i class="bi bi-person-circle me-1"></i>{{ identity.display_role }}
                         {% if identity.namespace %}@ {{ identity.namespace }}{% endif %}
                     </span>
                     <a class="btn btn-sm btn-outline-light ms-2" href="/logout">Logout</a>
