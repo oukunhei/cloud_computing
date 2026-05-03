@@ -12,10 +12,75 @@
             </ol>
         </nav>
         <h2><i class="bi bi-graph-up me-2"></i>Namespace: <code>{{ namespace }}</code></h2>
+        <p class="text-muted mb-0">
+            Current portal role:
+            <span class="badge {% if identity.role == 'admin' %}bg-danger{% elif identity.role == 'developer' %}bg-warning text-dark{% else %}bg-info text-dark{% endif %}">
+                {{ identity.role | capitalize }}
+            </span>
+            {% if identity.namespace %}
+            scoped to <code>{{ identity.namespace }}</code>
+            {% endif %}
+        </p>
     </div>
 </div>
 
 <div class="row g-4" id="resource-content">
+    <!-- Interactive Role Lab -->
+    <div class="col-md-12">
+        <div class="card border-primary">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-ui-checks-grid me-2"></i>Role Action Lab</span>
+                <span class="badge bg-light text-dark">Live Kubernetes API actions</span>
+            </div>
+            <div class="card-body">
+                {% if identity.role == 'viewer' %}
+                <div class="alert alert-info mb-3">
+                    <i class="bi bi-eye me-2"></i>
+                    Viewer can inspect resources and run permission checks, but workload write buttons are intentionally disabled.
+                </div>
+                {% elif identity.role == 'developer' %}
+                <div class="alert alert-warning mb-3">
+                    <i class="bi bi-terminal me-2"></i>
+                    Developer can create and delete demo workloads, but RBAC, secrets, quotas, and network policies remain protected.
+                </div>
+                {% else %}
+                <div class="alert alert-danger mb-3">
+                    <i class="bi bi-shield-lock me-2"></i>
+                    Admin can manage namespace resources and download all role kubeconfigs; namespace lifecycle is still a platform-admin action.
+                </div>
+                {% endif %}
+
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    <button class="btn btn-success" onclick="createDemoWorkload()" {% if identity.role == 'viewer' %}disabled{% endif %}>
+                        <i class="bi bi-plus-circle me-1"></i>Create Demo Workload
+                    </button>
+                    <button class="btn btn-outline-danger" onclick="deleteDemoWorkload()" {% if identity.role == 'viewer' %}disabled{% endif %}>
+                        <i class="bi bi-trash me-1"></i>Delete Demo Workload
+                    </button>
+                    <button class="btn btn-outline-primary" onclick="runPermissionChecks()">
+                        <i class="bi bi-shield-check me-1"></i>Run Permission Checks
+                    </button>
+                </div>
+
+                <div id="action-result" class="alert d-none mb-3"></div>
+                <div id="permission-result" class="table-responsive d-none">
+                    <div class="small text-muted mb-2" id="permission-subject"></div>
+                    <table class="table table-sm align-middle">
+                        <thead>
+                            <tr>
+                                <th>Action</th>
+                                <th>Result</th>
+                                <th>Expected for Role</th>
+                                <th>Check Command</th>
+                            </tr>
+                        </thead>
+                        <tbody id="permission-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- ResourceQuota -->
     <div class="col-md-6">
         <div class="card h-100">
@@ -95,7 +160,74 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
-    const ns = '{{ namespace }}';
+    loadNamespaceResources();
+});
+
+const ns = '{{ namespace }}';
+
+function showActionResult(message, type = 'success') {
+    const el = document.getElementById('action-result');
+    el.textContent = message;
+    el.className = `alert alert-${type} mb-3`;
+}
+
+async function createDemoWorkload() {
+    try {
+        const result = await apiPost(`/api/namespaces/${ns}/demo-workload`, {});
+        if (result.error) {
+            showActionResult(result.error, 'danger');
+            return;
+        }
+        showActionResult(result.message, 'success');
+        await loadNamespaceResources();
+    } catch (e) {
+        showActionResult('Failed to create demo workload', 'danger');
+    }
+}
+
+async function deleteDemoWorkload() {
+    try {
+        const result = await apiDelete(`/api/namespaces/${ns}/demo-workload`);
+        if (result.error) {
+            showActionResult(result.error, 'danger');
+            return;
+        }
+        showActionResult(result.message, 'success');
+        await loadNamespaceResources();
+    } catch (e) {
+        showActionResult('Failed to delete demo workload', 'danger');
+    }
+}
+
+async function runPermissionChecks() {
+    try {
+        const data = await apiGet(`/api/namespaces/${ns}/permission-checks`);
+        if (data.error) {
+            showActionResult(data.error, 'danger');
+            return;
+        }
+
+        document.getElementById('permission-subject').innerHTML =
+            `Checked as <code>${data.subject}</code> in namespace <code>${data.namespace}</code>.`;
+
+        const tbody = document.getElementById('permission-table-body');
+        tbody.innerHTML = data.checks.map(check => {
+            const resultClass = check.allowed ? 'success' : 'danger';
+            const expectedClass = check.expected ? 'success' : 'secondary';
+            return `<tr>
+                <td>${check.label}</td>
+                <td><span class="badge bg-${resultClass}">${check.allowed ? 'Allowed' : 'Denied'}</span></td>
+                <td><span class="badge bg-${expectedClass}">${check.expected ? 'Should allow' : 'Should deny'}</span></td>
+                <td><code class="small">${check.command}</code></td>
+            </tr>`;
+        }).join('');
+        document.getElementById('permission-result').classList.remove('d-none');
+    } catch (e) {
+        showActionResult('Failed to run permission checks', 'danger');
+    }
+}
+
+async function loadNamespaceResources() {
     try {
         const data = await apiGet(`/api/namespaces/${ns}/resources`);
         if (data.error) {
@@ -163,6 +295,8 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Pods
         if (data.pods && data.pods.length > 0) {
             document.getElementById('pod-count').textContent = data.pods.length;
+            document.getElementById('pod-table').classList.remove('d-none');
+            document.getElementById('no-pods').classList.add('d-none');
             const tbody = document.querySelector('#pod-table tbody');
             tbody.innerHTML = data.pods.map(p => {
                 const statusClass = p.status === 'Running' ? 'text-success' : p.status === 'Pending' ? 'text-warning' : 'text-danger';
@@ -177,13 +311,14 @@ document.addEventListener('DOMContentLoaded', async () => {
                 </tr>`;
             }).join('');
         } else {
+            document.getElementById('pod-count').textContent = '0';
             document.getElementById('pod-table').classList.add('d-none');
             document.getElementById('no-pods').classList.remove('d-none');
         }
     } catch (e) {
         showError('Failed to load namespace resources');
     }
-});
+}
 
 function parsePercent(used, hard) {
     const u = parseFloat(used);

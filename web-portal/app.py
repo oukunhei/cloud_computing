@@ -37,6 +37,38 @@ def require_admin_api(view):
     return wrapped
 
 
+def can_use_namespace(namespace):
+    role = session.get('role')
+    selected_namespace = session.get('namespace')
+    if role == 'admin':
+        return True
+    return not selected_namespace or selected_namespace == namespace
+
+
+def require_namespace_access(view):
+    @wraps(view)
+    def wrapped(namespace, *args, **kwargs):
+        if not can_use_namespace(namespace):
+            return jsonify({
+                'error': f'Your simulated {session.get("role")} session is scoped to namespace {session.get("namespace")}.'
+            }), 403
+        return view(namespace, *args, **kwargs)
+    return wrapped
+
+
+def require_workload_write(view):
+    @wraps(view)
+    def wrapped(namespace, *args, **kwargs):
+        if session.get('role') not in ('admin', 'developer'):
+            return jsonify({'error': 'Viewer is read-only and cannot create or delete workloads.'}), 403
+        if not can_use_namespace(namespace):
+            return jsonify({
+                'error': f'Your simulated {session.get("role")} session is scoped to namespace {session.get("namespace")}.'
+            }), 403
+        return view(namespace, *args, **kwargs)
+    return wrapped
+
+
 @app.context_processor
 def inject_identity():
     return {'identity': current_identity()}
@@ -157,12 +189,46 @@ def api_delete_tenant(name):
 
 @app.route('/api/namespaces/<namespace>/resources')
 @require_login
+@require_namespace_access
 def api_namespace_resources(namespace):
     return jsonify(k8s.get_namespace_resources(namespace))
 
 
+@app.route('/api/namespaces/<namespace>/demo-workload', methods=['POST'])
+@require_login
+@require_workload_write
+def api_create_demo_workload(namespace):
+    try:
+        message = k8s.create_demo_workload(namespace)
+        return jsonify({'success': True, 'message': message})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/namespaces/<namespace>/demo-workload', methods=['DELETE'])
+@require_login
+@require_workload_write
+def api_delete_demo_workload(namespace):
+    try:
+        message = k8s.delete_demo_workload(namespace)
+        return jsonify({'success': True, 'message': message})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/namespaces/<namespace>/permission-checks')
+@require_login
+@require_namespace_access
+def api_permission_checks(namespace):
+    try:
+        return jsonify(k8s.permission_checks(namespace, session.get('role')))
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/namespaces/<namespace>/kubeconfig')
 @require_login
+@require_namespace_access
 def api_generate_kubeconfig(namespace):
     role = request.args.get('role', 'dev')
     if role not in ('admin', 'dev', 'view'):

@@ -399,12 +399,27 @@ kubectl run test-client --image=busybox -it --rm --restart=Never --namespace tea
 | **Dashboard** | Cluster overview: nodes, namespaces, pods, tenant count |
 | **Tenant Management** | One-click create/delete tenants with full isolation stack |
 | **Resource Monitoring** | Per-namespace ResourceQuota usage bars, LimitRange rules, Pod list |
+| **Role Action Lab** | Browser buttons to create/delete a demo workload and run live RBAC permission checks |
 | **Kubeconfig Generator** | Web UI to download role-appropriate admin/dev/view kubeconfig files |
 | **Permissions Viewer** | Visual matrix showing what each role can/cannot do |
 
 ---
 
 ## Demo & Verification
+
+### 0. Web Portal Role Demo
+
+Use this flow to demonstrate resource and permission differences directly in the browser:
+
+1. Log in as `admin`.
+2. Open **Tenants** and create `team-alpha`.
+3. Open **Resources** for `team-alpha`.
+4. In **Role Action Lab**, click **Create Demo Workload**. A `lab-demo-nginx` Deployment and Service are created, and the Pod list refreshes.
+5. Click **Run Permission Checks**. The page runs `kubectl auth can-i --as=system:serviceaccount:lab-platform-users:team-alpha-admin ...` and shows which actions are allowed or denied.
+6. Log out, log in as `developer`, and open the same namespace. The developer can create/delete the demo workload, but the permission checks show denial for `secrets`, `resourcequotas`, and RBAC modification.
+7. Log out, log in as `viewer`, and open the same namespace. The viewer can inspect resources and run permission checks, while create/delete workload buttons are disabled.
+
+This browser flow shows both platform UX controls and live Kubernetes RBAC checks.
 
 ### 1. Verify RBAC (Developer)
 

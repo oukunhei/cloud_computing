@@ -204,6 +204,158 @@ class K8sClient:
 
         return result
 
+    def create_demo_workload(self, namespace):
+        if not self.connected:
+            raise RuntimeError('Not connected to Kubernetes')
+
+        labels = {'app': 'lab-demo'}
+        deployment = client.V1Deployment(
+            metadata=client.V1ObjectMeta(
+                name='lab-demo-nginx',
+                namespace=namespace,
+                labels=labels
+            ),
+            spec=client.V1DeploymentSpec(
+                replicas=1,
+                selector=client.V1LabelSelector(match_labels=labels),
+                template=client.V1PodTemplateSpec(
+                    metadata=client.V1ObjectMeta(labels=labels),
+                    spec=client.V1PodSpec(containers=[
+                        client.V1Container(
+                            name='nginx',
+                            image='nginx:alpine',
+                            ports=[client.V1ContainerPort(container_port=80)]
+                        )
+                    ])
+                )
+            )
+        )
+        service = client.V1Service(
+            metadata=client.V1ObjectMeta(
+                name='lab-demo-nginx',
+                namespace=namespace,
+                labels=labels
+            ),
+            spec=client.V1ServiceSpec(
+                selector=labels,
+                ports=[client.V1ServicePort(port=80, target_port=80)]
+            )
+        )
+
+        try:
+            self.apps_v1.create_namespaced_deployment(namespace=namespace, body=deployment)
+        except client.exceptions.ApiException as e:
+            if e.status != 409:
+                raise
+
+        try:
+            self.v1.create_namespaced_service(namespace=namespace, body=service)
+        except client.exceptions.ApiException as e:
+            if e.status != 409:
+                raise
+
+        return 'Demo nginx Deployment and Service are present.'
+
+    def delete_demo_workload(self, namespace):
+        if not self.connected:
+            raise RuntimeError('Not connected to Kubernetes')
+
+        deleted = []
+        try:
+            self.apps_v1.delete_namespaced_deployment(name='lab-demo-nginx', namespace=namespace)
+            deleted.append('Deployment')
+        except client.exceptions.ApiException as e:
+            if e.status != 404:
+                raise
+
+        try:
+            self.v1.delete_namespaced_service(name='lab-demo-nginx', namespace=namespace)
+            deleted.append('Service')
+        except client.exceptions.ApiException as e:
+            if e.status != 404:
+                raise
+
+        if not deleted:
+            return 'Demo workload was already absent.'
+        return f"Deleted demo {' and '.join(deleted)}."
+
+    def permission_checks(self, namespace, portal_role):
+        if not shutil.which('kubectl'):
+            raise RuntimeError(
+                'kubectl is not available in the portal container. '
+                'Set HOST_KUBECTL_PATH to a valid host kubectl binary or configure KUBECTL_BASE_URL, then rebuild/restart.'
+            )
+
+        suffix_by_role = {
+            'admin': 'admin',
+            'developer': 'dev',
+            'viewer': 'view'
+        }
+        suffix = suffix_by_role.get(portal_role)
+        if not suffix:
+            raise ValueError('Unknown portal role')
+
+        subject = f'system:serviceaccount:{USER_NAMESPACE}:{namespace}-{suffix}'
+        checks = [
+            {
+                'label': 'List pods',
+                'args': ['list', 'pods', '-n', namespace],
+                'expected': True
+            },
+            {
+                'label': 'Create deployments',
+                'args': ['create', 'deployments.apps', '-n', namespace],
+                'expected': portal_role in ('admin', 'developer')
+            },
+            {
+                'label': 'Read secrets',
+                'args': ['get', 'secrets', '-n', namespace],
+                'expected': portal_role == 'admin'
+            },
+            {
+                'label': 'Read ResourceQuota',
+                'args': ['get', 'resourcequotas', '-n', namespace],
+                'expected': portal_role == 'admin'
+            },
+            {
+                'label': 'Modify RBAC roles',
+                'args': ['create', 'roles.rbac.authorization.k8s.io', '-n', namespace],
+                'expected': portal_role == 'admin'
+            },
+            {
+                'label': 'Exec into pods',
+                'args': ['create', 'pods/exec', '-n', namespace],
+                'expected': portal_role in ('admin', 'developer')
+            },
+            {
+                'label': 'Delete namespaces',
+                'args': ['delete', 'namespaces', namespace],
+                'expected': False
+            }
+        ]
+
+        results = []
+        for check in checks:
+            result = subprocess.run(
+                ['kubectl', 'auth', 'can-i', '--as', subject] + check['args'],
+                capture_output=True,
+                text=True
+            )
+            allowed = result.stdout.strip().lower() == 'yes'
+            results.append({
+                'label': check['label'],
+                'allowed': allowed,
+                'expected': check['expected'],
+                'command': 'kubectl auth can-i --as ' + subject + ' ' + ' '.join(check['args'])
+            })
+
+        return {
+            'namespace': namespace,
+            'role': portal_role,
+            'subject': subject,
+            'checks': results
+        }
+
     def _parse_resource(self, value):
         if not value:
             return 0
