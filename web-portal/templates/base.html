@@ -19,6 +19,7 @@
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav me-auto">
+                    {% if identity.is_logged_in %}
                     <li class="nav-item">
                         <a class="nav-link" href="/dashboard"><i class="bi bi-speedometer2 me-1"></i>Dashboard</a>
                     </li>
@@ -31,7 +32,19 @@
                     <li class="nav-item">
                         <a class="nav-link" href="/permissions"><i class="bi bi-shield-lock me-1"></i>Permissions</a>
                     </li>
+                    {% endif %}
                 </ul>
+                {% if identity.is_logged_in %}
+                <span class="navbar-text me-3">
+                    <span class="badge bg-light text-dark">
+                        <i class="bi bi-person-circle me-1"></i>{{ identity.role | capitalize }}
+                        {% if identity.namespace %}@ {{ identity.namespace }}{% endif %}
+                    </span>
+                    <a class="btn btn-sm btn-outline-light ms-2" href="/logout">Logout</a>
+                </span>
+                {% else %}
+                <a class="btn btn-sm btn-outline-light me-3" href="/login">Role Login</a>
+                {% endif %}
                 <span class="navbar-text" id="k8s-status">
                     <span class="badge bg-secondary"><i class="bi bi-circle"></i> Checking...</span>
                 </span>

@@ -132,6 +132,7 @@ docker-compose down
   - Kubeconfig YAML generation with TokenRequest API tokens
 - **`config.py`** — Constants:
   - `SYSTEM_NAMESPACES`: namespaces excluded from tenant listings
+  - `USER_NAMESPACE`: namespace that stores isolated user ServiceAccounts
   - `ROLE_PERMISSIONS`: human-readable permission matrix for the UI
   - `FLASK_PORT`: defaults to 8080, overridable via env var
 
@@ -151,8 +152,8 @@ All YAMLs in `rbac/`, `resources/`, and `networkpolicies/` are **templates** pro
 
 ### Naming
 - Tenant namespaces must be DNS-compatible: lowercase alphanumeric and hyphens only. Validated in `app.py` and `onboard-team.sh`.
-- ServiceAccounts per tenant: `dev-user` and `view-user`.
-- Generated kubeconfig files: `<namespace>-dev-kubeconfig` and `<namespace>-view-kubeconfig`.
+- User ServiceAccounts are stored in `lab-platform-users` by default and named `<namespace>-admin`, `<namespace>-dev`, and `<namespace>-view`.
+- Generated kubeconfig files: `<namespace>-admin-kubeconfig`, `<namespace>-dev-kubeconfig`, and `<namespace>-view-kubeconfig`.
 
 ### Python Style
 - Standard Flask conventions.
@@ -165,7 +166,7 @@ All YAMLs in `rbac/`, `resources/`, and `networkpolicies/` are **templates** pro
 - Colorized output with ANSI escape codes is standard in `onboard-team.sh`.
 
 ### Kubernetes Patterns
-- **Deny-by-default RBAC**: Both `developer-role.yaml` and `viewer-role.yaml` contain explicit `deny` rules with `verbs: ["*"]` on sensitive resources. This is a safety pattern in case cluster-level bindings grant broader access.
+- **Least-privilege RBAC**: Kubernetes RBAC is additive and has no explicit deny rule. Developer/viewer roles omit sensitive permissions instead of trying to deny them.
 - **Template substitution**: `onboard-team.sh` uses `sed` to inject the tenant namespace and user names into YAML manifests before applying them.
 
 ---
@@ -282,8 +283,8 @@ docker-compose logs -f web
 # Force-delete a stuck namespace
 kubectl delete namespace <name> --force
 
-# Regenerate a tenant kubeconfig manually
-kubectl create token dev-user -n team-alpha --duration=8760h
+# Regenerate a tenant developer token manually
+kubectl create token team-alpha-dev -n lab-platform-users --duration=8760h
 ```
 
 ---

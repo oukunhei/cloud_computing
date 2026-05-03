@@ -2,20 +2,23 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: viewer
+  namespace: default
 rules:
-- apiGroups: ["", "apps", "networking.k8s.io", "extensions", "autoscaling"]
-  resources: ["pods", "pods/log", "services", "deployments", "configmaps", "ingresses", "events", "horizontalpodautoscalers"]
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "services", "configmaps", "events"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["apps"]
+  resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["networking.k8s.io"]
+  resources: ["ingresses"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["autoscaling"]
+  resources: ["horizontalpodautoscalers"]
   verbs: ["get", "list", "watch"]
 - apiGroups: ["batch"]
   resources: ["jobs", "cronjobs"]
   verbs: ["get", "list", "watch"]
-# Explicitly DENY write operations and sensitive actions
-- apiGroups: [""]
-  resources: ["pods/exec", "pods/portforward", "pods/attach", "pods/proxy"]
-  verbs: ["*"]
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["*"]
-- apiGroups: ["rbac.authorization.k8s.io"]
-  resources: ["roles", "rolebindings"]
-  verbs: ["*"]
+- apiGroups: ["events.k8s.io"]
+  resources: ["events"]
+  verbs: ["get", "list", "watch"]

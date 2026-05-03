@@ -7,8 +7,10 @@ services:
       dockerfile: web-portal/Dockerfile
     network_mode: host
     volumes:
-      - /etc/rancher/k3s/k3s.yaml:/host/kubeconfig:ro
+      - ${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}:/host/kubeconfig:ro
     environment:
       - KUBECONFIG=/app/kubeconfig
-      - FLASK_PORT=8080
+      - FLASK_PORT=${FLASK_PORT:-8080}
+      - USER_NAMESPACE=${USER_NAMESPACE:-lab-platform-users}
+      - SECRET_KEY=${SECRET_KEY:-dev-only-change-me}
     restart: unless-stopped

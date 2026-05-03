@@ -40,3 +40,51 @@ code {
     right: 1rem;
     z-index: 1060;
 }
+
+.login-hero {
+    min-height: calc(100vh - 12rem);
+    display: flex;
+    align-items: center;
+    background:
+        radial-gradient(circle at 20% 20%, rgba(13, 110, 253, 0.12), transparent 30%),
+        radial-gradient(circle at 80% 10%, rgba(25, 135, 84, 0.12), transparent 28%),
+        linear-gradient(135deg, #f8f9fa 0%, #eef3f8 100%);
+    border-radius: 1.5rem;
+    padding: 2rem;
+}
+
+.login-panel {
+    border-radius: 1.25rem;
+}
+
+.role-card {
+    border-radius: 1rem;
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.role-card:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 1rem 2rem rgba(0, 0, 0, 0.12);
+}
+
+.role-icon {
+    width: 3rem;
+    height: 3rem;
+    border-radius: 0.9rem;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-size: 1.4rem;
+}
+
+.role-card-admin .role-icon {
+    background: linear-gradient(135deg, #dc3545, #8b1e2d);
+}
+
+.role-card-developer .role-icon {
+    background: linear-gradient(135deg, #ffc107, #c27803);
+}
+
+.role-card-viewer .role-icon {
+    background: linear-gradient(135deg, #0dcaf0, #087990);
+}

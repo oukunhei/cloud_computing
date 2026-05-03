@@ -3,7 +3,7 @@ import subprocess
 import yaml
 from datetime import datetime, timezone
 from kubernetes import client, config
-from config import SYSTEM_NAMESPACES
+from config import SYSTEM_NAMESPACES, USER_NAMESPACE
 
 
 class K8sClient:
@@ -109,6 +109,14 @@ class K8sClient:
             raise ValueError("Cannot delete system namespace")
 
         self.v1.delete_namespace(name=name)
+        for suffix in ('admin', 'dev', 'view'):
+            try:
+                self.v1.delete_namespaced_service_account(
+                    name=f"{name}-{suffix}",
+                    namespace=USER_NAMESPACE
+                )
+            except Exception:
+                pass
         return f"Namespace {name} deleted"
 
     def get_namespace_resources(self, namespace):
@@ -222,11 +230,16 @@ class K8sClient:
         return f"{mins}m"
 
     def generate_kubeconfig(self, namespace, role):
-        if role not in ('dev', 'view'):
-            raise ValueError("Role must be 'dev' or 'view'")
+        service_accounts = {
+            'admin': f'{namespace}-admin',
+            'dev': f'{namespace}-dev',
+            'view': f'{namespace}-view'
+        }
+        if role not in service_accounts:
+            raise ValueError("Role must be 'admin', 'dev', or 'view'")
 
-        sa_name = 'dev-user' if role == 'dev' else 'view-user'
-        context_name = f"{role}-context"
+        sa_name = service_accounts[role]
+        context_name = f"{namespace}-{role}"
 
         with open(self.kubeconfig_path) as f:
             kubeconfig = yaml.safe_load(f)
@@ -241,7 +254,7 @@ class K8sClient:
 
         # Generate token using kubectl (most reliable across K3s versions)
         result = subprocess.run(
-            ['kubectl', 'create', 'token', sa_name, '-n', namespace, '--duration=8760h'],
+            ['kubectl', 'create', 'token', sa_name, '-n', USER_NAMESPACE, '--duration=8760h'],
             capture_output=True, text=True
         )
         if result.returncode != 0:

@@ -22,10 +22,15 @@ if [ -z "${1:-}" ]; then
 fi
 
 NAMESPACE=$1
+USER_NAMESPACE="${USER_NAMESPACE:-lab-platform-users}"
 
 # Validate namespace name
 if [[ ! "$NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
     echo -e "${RED}Error: Invalid namespace name. Must be DNS-compatible (lowercase alphanumeric and hyphens).${NC}"
+    exit 1
+fi
+if [ "${#NAMESPACE}" -gt 63 ]; then
+    echo -e "${RED}Error: Namespace name must be 63 characters or fewer.${NC}"
     exit 1
 fi
 
@@ -42,22 +47,34 @@ echo -e "${BLUE}🚀 Creating tenant: $NAMESPACE${NC}"
 # 1. Create Namespace
 echo -e "${YELLOW}  → Creating namespace...${NC}"
 kubectl create namespace "$NAMESPACE"
+kubectl label namespace "$NAMESPACE" \
+    tenant.lab/platform=enabled \
+    pod-security.kubernetes.io/enforce=baseline \
+    pod-security.kubernetes.io/audit=restricted \
+    pod-security.kubernetes.io/warn=restricted \
+    --overwrite
 
 # 2. Create ServiceAccounts
-echo -e "${YELLOW}  → Creating ServiceAccounts...${NC}"
-kubectl create sa dev-user -n "$NAMESPACE"
-kubectl create sa view-user -n "$NAMESPACE"
+echo -e "${YELLOW}  → Creating isolated user ServiceAccounts...${NC}"
+kubectl create namespace "$USER_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+kubectl label namespace "$USER_NAMESPACE" tenant.lab/system=users --overwrite
+kubectl create sa "${NAMESPACE}-admin" -n "$USER_NAMESPACE"
+kubectl create sa "${NAMESPACE}-dev" -n "$USER_NAMESPACE"
+kubectl create sa "${NAMESPACE}-view" -n "$USER_NAMESPACE"
 
 # 3. Apply Roles
 echo -e "${YELLOW}  → Applying Roles...${NC}"
+sed "s/namespace: .*/namespace: $NAMESPACE/g" "$SCRIPT_DIR/rbac/admin-role.yaml" | kubectl apply -f -
 sed "s/namespace: .*/namespace: $NAMESPACE/g" "$SCRIPT_DIR/rbac/developer-role.yaml" | kubectl apply -f -
 sed "s/namespace: .*/namespace: $NAMESPACE/g" "$SCRIPT_DIR/rbac/viewer-role.yaml" | kubectl apply -f -
 
 # 4. Create RoleBindings
 echo -e "${YELLOW}  → Creating RoleBindings...${NC}"
-sed "s/{{ROLE}}/developer/g; s/{{USER}}/dev-user/g; s/{{NAMESPACE}}/$NAMESPACE/g" \
+sed "s/{{ROLE}}/admin/g; s/{{USER}}/${NAMESPACE}-admin/g; s/{{NAMESPACE}}/$NAMESPACE/g; s/{{USER_NAMESPACE}}/$USER_NAMESPACE/g" \
     "$SCRIPT_DIR/rbac/rolebinding-template.yaml" | kubectl apply -f -
-sed "s/{{ROLE}}/viewer/g; s/{{USER}}/view-user/g; s/{{NAMESPACE}}/$NAMESPACE/g" \
+sed "s/{{ROLE}}/developer/g; s/{{USER}}/${NAMESPACE}-dev/g; s/{{NAMESPACE}}/$NAMESPACE/g; s/{{USER_NAMESPACE}}/$USER_NAMESPACE/g" \
+    "$SCRIPT_DIR/rbac/rolebinding-template.yaml" | kubectl apply -f -
+sed "s/{{ROLE}}/viewer/g; s/{{USER}}/${NAMESPACE}-view/g; s/{{NAMESPACE}}/$NAMESPACE/g; s/{{USER_NAMESPACE}}/$USER_NAMESPACE/g" \
     "$SCRIPT_DIR/rbac/rolebinding-template.yaml" | kubectl apply -f -
 
 # 5. Apply ResourceQuota and LimitRange
@@ -82,7 +99,7 @@ CA_DATA=$(kubectl config view --raw -o jsonpath="{.clusters[?(@.name==\"$CLUSTER
 if [ -z "$CA_DATA" ]; then
     CA_FILE=$(kubectl config view -o jsonpath="{.clusters[?(@.name==\"$CLUSTER_NAME\")].cluster.certificate-authority}")
     if [ -n "$CA_FILE" ] && [ -f "$CA_FILE" ]; then
-        CA_DATA=$(base64 -w 0 "$CA_FILE")
+        CA_DATA=$(base64 < "$CA_FILE" | tr -d '\n')
     fi
 fi
 
@@ -94,7 +111,8 @@ generate_kubeconfig() {
 
     # K3s v1.24+: Use TokenRequest API instead of reading static secret
     local token
-    token=$(kubectl create token "$sa_name" -n "$NAMESPACE" --duration=8760h)
+    token=$(kubectl create token "$sa_name" -n "$USER_NAMESPACE" --duration=8760h)
+    local context_name="${NAMESPACE}-${role}"
 
     cat > "$out_file" <<EOF
 apiVersion: v1
@@ -109,24 +127,26 @@ users:
   user:
     token: $token
 contexts:
-- name: $role-context
+- name: $context_name
   context:
     cluster: $CLUSTER_NAME
     user: $sa_name
     namespace: $NAMESPACE
-current-context: $role-context
+current-context: $context_name
 EOF
 
     chmod 600 "$out_file"
 }
 
-generate_kubeconfig "developer" "dev-user" "${NAMESPACE}-dev-kubeconfig"
-generate_kubeconfig "viewer" "view-user" "${NAMESPACE}-view-kubeconfig"
+generate_kubeconfig "admin" "${NAMESPACE}-admin" "${NAMESPACE}-admin-kubeconfig"
+generate_kubeconfig "developer" "${NAMESPACE}-dev" "${NAMESPACE}-dev-kubeconfig"
+generate_kubeconfig "viewer" "${NAMESPACE}-view" "${NAMESPACE}-view-kubeconfig"
 
 echo ""
 echo -e "${GREEN}✅ Tenant '$NAMESPACE' created successfully!${NC}"
 echo ""
 echo -e "${BLUE}📁 Generated Kubeconfig Files:${NC}"
+echo -e "   ${GREEN}Admin:${NC}     ${NAMESPACE}-admin-kubeconfig"
 echo -e "   ${GREEN}Developer:${NC} ${NAMESPACE}-dev-kubeconfig"
 echo -e "   ${GREEN}Viewer:${NC}    ${NAMESPACE}-view-kubeconfig"
 echo ""

@@ -1,7 +1,8 @@
 #!/bin/bash
 set -e
 
-# Install kubectl if not present (ensures version compatibility with host K3s)
+# kubectl is installed in the Docker image. Keep a runtime fallback for
+# manually rebuilt images or unusual base-image changes.
 if ! command -v kubectl >/dev/null 2>&1; then
     echo "⏳ kubectl not found in container, installing matching version..."
     KUBE_VERSION=$(curl -L -s --max-time 10 --connect-timeout 5 https://dl.k8s/release/stable.txt || true)
@@ -24,8 +25,9 @@ if [ -f /host/kubeconfig ]; then
     chmod 600 /app/kubeconfig
     echo "✅ Kubeconfig loaded from host."
 else
-    echo "⚠️  WARNING: /host/kubeconfig not found. Kubernetes features will not work."
-    echo "   Please ensure K3s is installed and /etc/rancher/k3s/k3s.yaml exists."
+    echo "❌ /host/kubeconfig not found."
+    echo "   Set KUBECONFIG_HOST_PATH in .env or ensure K3s created /etc/rancher/k3s/k3s.yaml."
+    exit 1
 fi
 
 # Wait for Kubernetes API to be reachable
@@ -43,8 +45,9 @@ print('OK')
             break
         fi
         if [ "$i" -eq 30 ]; then
-            echo "❌ Could not connect to Kubernetes API. Please check K3s status."
-            exit 1
+            echo "⚠️  Could not connect to Kubernetes API. Starting portal in disconnected mode."
+            echo "   Check K3s status and the server address in /app/kubeconfig."
+            break
         fi
         sleep 1
     done

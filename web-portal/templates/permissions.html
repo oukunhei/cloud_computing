@@ -46,7 +46,7 @@
                         </div>
                     </div>
                     <div class="col-md-4">
-                        <h6 class="text-danger"><i class="bi bi-x-octagon me-2"></i>Explicitly Denied</h6>
+                        <h6 class="text-danger"><i class="bi bi-x-octagon me-2"></i>Not Granted</h6>
                         {% if role_info.denied %}
                         <ul class="list-group list-group-flush">
                             {% for item in role_info.denied %}
@@ -55,6 +55,9 @@
                         </ul>
                         {% else %}
                         <p class="text-muted">No restrictions.</p>
+                        {% endif %}
+                        {% if role_info.note %}
+                        <p class="small text-muted mt-2">{{ role_info.note }}</p>
                         {% endif %}
                     </div>
                 </div>
@@ -73,7 +76,7 @@
             <div class="card-body">
                 <ul class="mb-0">
                     <li><strong>Developer</strong> cannot access <code>secrets</code> to prevent credential leakage if their kubeconfig is compromised.</li>
-                    <li><strong>Developer</strong> cannot modify RBAC, quotas, or network policies — these are platform-level controls managed by admins only.</li>
+                    <li><strong>Developer</strong> cannot modify RBAC, quotas, or network policies because those permissions are not granted; Kubernetes RBAC is additive and has no explicit deny.</li>
                     <li><strong>Viewer</strong> cannot execute commands in pods or port-forward, preventing unauthorized access to running applications.</li>
                     <li><strong>NetworkPolicy</strong> enforces isolation at the network layer, independent of RBAC.</li>
                     <li><strong>ResourceQuota</strong> prevents noisy-neighbor problems by capping total resource consumption per namespace.</li>
