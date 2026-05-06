@@ -332,7 +332,7 @@ class K8sClient:
             {
                 'label': 'Read ResourceQuota',
                 'args': ['get', 'resourcequotas', '-n', namespace],
-                'expected': portal_role in ('cluster-admin', 'admin')
+                'expected': True
             },
             {
                 'label': 'Modify ResourceQuota',

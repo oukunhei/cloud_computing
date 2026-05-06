@@ -23,7 +23,8 @@ ROLE_PERMISSIONS = {
         'description': 'Can deploy and manage workloads within their namespace',
         'can_read': [
             'pods', 'pods/log', 'services', 'deployments',
-            'configmaps', 'ingresses', 'events', 'jobs', 'cronjobs', 'hpa'
+            'configmaps', 'ingresses', 'events', 'jobs', 'cronjobs', 'hpa',
+            'resourcequotas', 'limitranges'
         ],
         'can_write': [
             'pods', 'services', 'deployments', 'configmaps',
@@ -31,8 +32,8 @@ ROLE_PERMISSIONS = {
         ],
         'can_exec': True,
         'denied': [
-            'roles', 'rolebindings', 'resourcequotas',
-            'limitranges', 'networkpolicies', 'secrets'
+            'roles', 'rolebindings',
+            'networkpolicies', 'secrets'
         ],
         'note': 'These are not granted by RBAC; Kubernetes RBAC is additive and has no explicit deny rule.'
     },
@@ -40,7 +41,8 @@ ROLE_PERMISSIONS = {
         'description': 'Read-only access to namespace resources',
         'can_read': [
             'pods', 'pods/log', 'services', 'deployments',
-            'configmaps', 'ingresses', 'events', 'jobs', 'cronjobs', 'hpa'
+            'configmaps', 'ingresses', 'events', 'jobs', 'cronjobs', 'hpa',
+            'resourcequotas', 'limitranges'
         ],
         'can_write': [],
         'can_exec': False,

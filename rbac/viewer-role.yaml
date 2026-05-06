@@ -5,7 +5,7 @@ metadata:
   namespace: default
 rules:
 - apiGroups: [""]
-  resources: ["pods", "pods/log", "services", "configmaps", "events"]
+  resources: ["pods", "pods/log", "services", "configmaps", "events", "resourcequotas", "limitranges"]
   verbs: ["get", "list", "watch"]
 - apiGroups: ["apps"]
   resources: ["deployments", "replicasets", "statefulsets", "daemonsets"]
