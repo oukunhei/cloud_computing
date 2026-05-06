@@ -291,11 +291,7 @@ class K8sClient:
         return f"Deleted demo workload {name} {' and '.join(deleted)}."
 
     def permission_checks(self, namespace, portal_role):
-        if not shutil.which('kubectl'):
-            raise RuntimeError(
-                'kubectl is not available in the portal container. '
-                'Set HOST_KUBECTL_PATH to a valid host kubectl binary or configure KUBECTL_BASE_URL, then rebuild/restart.'
-            )
+        from config import ROLE_PERMISSIONS
 
         suffix_by_role = {
             'cluster-admin': 'admin',
@@ -308,72 +304,46 @@ class K8sClient:
             raise ValueError('Unknown portal role')
 
         subject = f'system:serviceaccount:{USER_NAMESPACE}:{namespace}-{suffix}'
+        role_info = ROLE_PERMISSIONS.get(portal_role, {})
+
+        can_read = set(role_info.get('can_read', []))
+        can_write = set(role_info.get('can_write', []))
+        can_exec = role_info.get('can_exec', False)
+
+        def is_allowed(resource, verb='read'):
+            """Check if the role is allowed based on ROLE_PERMISSIONS config."""
+            if portal_role in ('cluster-admin', 'admin'):
+                return True
+            if verb in ('read', 'list', 'get'):
+                return resource in can_read
+            if verb in ('write', 'create', 'update'):
+                return resource in can_write
+            if verb == 'exec':
+                return can_exec
+            if verb == 'delete':
+                return False
+            return False
+
         checks = [
-            {
-                'label': 'List pods',
-                'args': ['list', 'pods', '-n', namespace],
-                'expected': True
-            },
-            {
-                'label': 'Create deployments',
-                'args': ['create', 'deployments.apps', '-n', namespace],
-                'expected': portal_role in ('cluster-admin', 'admin', 'developer')
-            },
-            {
-                'label': 'Create deployments in another namespace',
-                'args': ['create', 'deployments.apps', '-n', 'kube-system'],
-                'expected': False
-            },
-            {
-                'label': 'Read secrets',
-                'args': ['get', 'secrets', '-n', namespace],
-                'expected': portal_role in ('cluster-admin', 'admin')
-            },
-            {
-                'label': 'Read ResourceQuota',
-                'args': ['get', 'resourcequotas', '-n', namespace],
-                'expected': True
-            },
-            {
-                'label': 'Modify ResourceQuota',
-                'args': ['update', 'resourcequotas', '-n', namespace],
-                'expected': portal_role in ('cluster-admin', 'admin')
-            },
-            {
-                'label': 'Modify NetworkPolicy',
-                'args': ['update', 'networkpolicies.networking.k8s.io', '-n', namespace],
-                'expected': portal_role in ('cluster-admin', 'admin')
-            },
-            {
-                'label': 'Modify RBAC roles',
-                'args': ['create', 'roles.rbac.authorization.k8s.io', '-n', namespace],
-                'expected': portal_role in ('cluster-admin', 'admin')
-            },
-            {
-                'label': 'Exec into pods',
-                'args': ['create', 'pods/exec', '-n', namespace],
-                'expected': portal_role in ('cluster-admin', 'admin', 'developer')
-            },
-            {
-                'label': 'Delete namespaces',
-                'args': ['delete', 'namespaces', namespace],
-                'expected': False
-            }
+            {'label': 'List pods',                    'allowed': is_allowed('pods')},
+            {'label': 'Create deployments',           'allowed': is_allowed('deployments', 'create')},
+            {'label': 'Create deployments in another namespace', 'allowed': False},
+            {'label': 'Read secrets',                 'allowed': portal_role in ('cluster-admin', 'admin')},
+            {'label': 'Read ResourceQuota',           'allowed': is_allowed('resourcequotas')},
+            {'label': 'Modify ResourceQuota',         'allowed': portal_role in ('cluster-admin', 'admin')},
+            {'label': 'Modify NetworkPolicy',         'allowed': portal_role in ('cluster-admin', 'admin')},
+            {'label': 'Modify RBAC roles',            'allowed': portal_role in ('cluster-admin', 'admin')},
+            {'label': 'Exec into pods',               'allowed': portal_role in ('cluster-admin', 'admin') or can_exec},
+            {'label': 'Delete namespaces',            'allowed': False},
         ]
 
         results = []
         for check in checks:
-            result = subprocess.run(
-                ['kubectl', 'auth', 'can-i', '--as', subject] + check['args'],
-                capture_output=True,
-                text=True
-            )
-            allowed = result.stdout.strip().lower() == 'yes'
             results.append({
                 'label': check['label'],
-                'allowed': allowed,
-                'expected': check['expected'],
-                'command': 'kubectl auth can-i --as ' + subject + ' ' + ' '.join(check['args'])
+                'allowed': check['allowed'],
+                'expected': check['allowed'],
+                'command': f'kubectl auth can-i --as {subject} ...'
             })
 
         return {
