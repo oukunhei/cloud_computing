@@ -24,37 +24,87 @@
     </div>
 </div>
 
+<!-- Live Resource Monitoring -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-dark text-white d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                <span><i class="bi bi-activity me-2"></i>Live Resource Usage</span>
+                <span class="badge bg-light text-dark" id="live-updated">Waiting for metrics</span>
+            </div>
+            <div class="card-body">
+                <div id="metrics-warning" class="alert alert-warning d-none mb-3"></div>
+                <div class="row g-3">
+                    <div class="col-lg-4">
+                        <div class="metric-tile">
+                            <div class="metric-label">CPU Now</div>
+                            <div class="metric-value"><span id="live-cpu">-</span><span class="metric-unit">m</span></div>
+                            <div class="progress metric-progress">
+                                <div class="progress-bar bg-primary" id="cpu-progress" style="width: 0%"></div>
+                            </div>
+                            <div class="metric-subtext" id="cpu-limit">Quota limit unknown</div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="metric-tile">
+                            <div class="metric-label">Memory Now</div>
+                            <div class="metric-value"><span id="live-memory">-</span><span class="metric-unit">MiB</span></div>
+                            <div class="progress metric-progress">
+                                <div class="progress-bar bg-success" id="memory-progress" style="width: 0%"></div>
+                            </div>
+                            <div class="metric-subtext" id="memory-limit">Quota limit unknown</div>
+                        </div>
+                    </div>
+                    <div class="col-lg-4">
+                        <div class="metric-tile">
+                            <div class="metric-label">Measured Pods</div>
+                            <div class="metric-value"><span id="live-pod-count">0</span><span class="metric-unit">pods</span></div>
+                            <div class="metric-subtext">Auto-refreshes every 5 seconds from metrics.k8s.io</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive mt-3">
+                    <table class="table table-sm align-middle mb-0" id="live-usage-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Pod</th>
+                                <th class="text-end">CPU</th>
+                                <th class="text-end">Memory</th>
+                                <th>Sample Time</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="no-live-pods" class="text-center text-muted py-4 d-none">
+                    <i class="bi bi-speedometer fs-1"></i>
+                    <p class="mt-2 mb-0">No live pod metrics for this namespace yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- Grafana Dashboard Embed -->
 <div class="row mb-4">
     <div class="col-12">
         <div class="card border-0 shadow-sm">
-            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-                <span>
-                    <img src="https://grafana.com/static/assets/img/fav32.png" width="20" height="20" class="me-2" alt="Grafana">
-                    Resource Monitoring — Grafana Dashboard
-                </span>
+            <div class="card-header bg-secondary text-white d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                <span><i class="bi bi-bar-chart-fill me-2"></i>Grafana Detail Panels</span>
                 <div>
-                    <a href="http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace={{ namespace }}&refresh=15s" 
+                    <a href="http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace={{ namespace }}&refresh=15s"
                        target="_blank" class="btn btn-sm btn-outline-light me-1" title="Open in Grafana">
-                        <i class="bi bi-box-arrow-up-right"></i> Open in Grafana
+                        <i class="bi bi-box-arrow-up-right"></i> Open
                     </a>
                     <button class="btn btn-sm btn-outline-light" onclick="toggleGrafanaFullscreen()" title="Toggle Fullscreen">
                         <i class="bi bi-arrows-fullscreen"></i>
                     </button>
                 </div>
             </div>
-            <div class="card-body p-0" id="grafana-container" style="height: 700px; position: relative;">
-                <div class="d-flex justify-content-center align-items-center h-100" id="grafana-loading">
-                    <div class="text-center">
-                        <div class="spinner-border text-primary mb-3" role="status"></div>
-                        <p class="text-muted">Loading Grafana dashboard…</p>
-                    </div>
-                </div>
+            <div class="card-body p-0" id="grafana-container" style="height: 520px; position: relative;">
                 <iframe id="grafana-frame"
                         src="http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace={{ namespace }}&refresh=15s&kiosk=tv&theme=light"
-                        style="width: 100%; height: 100%; border: 0; display: none;"
-                        onload="document.getElementById('grafana-loading').style.display='none'; this.style.display='block';"
-                        >
+                        style="width: 100%; height: 100%; border: 0;">
                 </iframe>
             </div>
         </div>
@@ -161,13 +211,8 @@
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
     loadNamespaceResources();
-    // Fallback: show warning if Grafana iframe hasn't loaded after 10s
-    setTimeout(() => {
-        const loading = document.getElementById('grafana-loading');
-        if (loading && loading.style.display !== 'none') {
-            loading.innerHTML = '<div class="alert alert-warning m-3"><i class="bi bi-exclamation-triangle me-2"></i>Grafana is not reachable at <code>localhost:3000</code>. Start it with: <code>docker compose up -d prometheus grafana</code></div>';
-        }
-    }, 10000);
+    loadLiveUsage();
+    setInterval(loadLiveUsage, 5000);
 });
 
 const ns = '{{ namespace }}';
@@ -196,6 +241,7 @@ async function createDemoWorkload() {
         }
         showActionResult(result.message, 'success');
         await loadNamespaceResources();
+        await loadLiveUsage();
         // Refresh Grafana iframe
         const frame = document.getElementById('grafana-frame');
         if (frame) frame.src = frame.src;
@@ -213,6 +259,7 @@ async function deleteDemoWorkload() {
         }
         showActionResult(result.message, 'success');
         await loadNamespaceResources();
+        await loadLiveUsage();
         const frame = document.getElementById('grafana-frame');
         if (frame) frame.src = frame.src;
     } catch (e) {
@@ -282,6 +329,83 @@ async function loadNamespaceResources() {
     } catch (e) {
         showError('Failed to load namespace resources');
     }
+}
+
+async function loadLiveUsage() {
+    try {
+        const data = await apiGet(`/api/namespaces/${ns}/live-usage`);
+        if (data.error) {
+            showMetricsWarning(data.error);
+            return;
+        }
+
+        const warning = document.getElementById('metrics-warning');
+        if (data.metrics_available) {
+            warning.classList.add('d-none');
+            warning.textContent = '';
+        } else {
+            showMetricsWarning(data.metrics_error || 'Live metrics are not available yet.');
+        }
+
+        const totals = data.totals || {};
+        const limits = data.limits || {};
+        document.getElementById('live-cpu').textContent = formatNumber(totals.cpu_millicores);
+        document.getElementById('live-memory').textContent = formatNumber(totals.memory_mib);
+        document.getElementById('live-pod-count').textContent = (data.pods || []).length;
+        document.getElementById('live-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
+
+        updateProgress('cpu-progress', totals.cpu_percent);
+        updateProgress('memory-progress', totals.memory_percent);
+        document.getElementById('cpu-limit').textContent = limits.cpu_millicores
+            ? `${formatNumber(totals.cpu_percent)}% of ${formatNumber(limits.cpu_millicores)}m quota`
+            : 'Quota limit unknown';
+        document.getElementById('memory-limit').textContent = limits.memory_mib
+            ? `${formatNumber(totals.memory_percent)}% of ${formatNumber(limits.memory_mib)} MiB quota`
+            : 'Quota limit unknown';
+
+        const table = document.getElementById('live-usage-table');
+        const empty = document.getElementById('no-live-pods');
+        const tbody = table.querySelector('tbody');
+        if (data.pods && data.pods.length > 0) {
+            table.classList.remove('d-none');
+            empty.classList.add('d-none');
+            tbody.innerHTML = data.pods.map(p => `
+                <tr>
+                    <td><code>${p.name}</code></td>
+                    <td class="text-end">${formatNumber(p.cpu_millicores)}m</td>
+                    <td class="text-end">${formatNumber(p.memory_mib)} MiB</td>
+                    <td>${p.timestamp ? new Date(p.timestamp).toLocaleTimeString() : '-'}</td>
+                </tr>
+            `).join('');
+        } else {
+            table.classList.add('d-none');
+            empty.classList.remove('d-none');
+            tbody.innerHTML = '';
+        }
+    } catch (e) {
+        showMetricsWarning('Failed to load live resource usage.');
+    }
+}
+
+function showMetricsWarning(message) {
+    const el = document.getElementById('metrics-warning');
+    el.innerHTML = `<i class="bi bi-exclamation-triangle me-2"></i>${message}`;
+    el.classList.remove('d-none');
+}
+
+function updateProgress(id, percent) {
+    const el = document.getElementById(id);
+    const value = Math.max(0, Math.min(100, Number(percent) || 0));
+    el.style.width = `${value}%`;
+    el.setAttribute('aria-valuenow', value);
+}
+
+function formatNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return '-';
+    if (number >= 100) return number.toFixed(0);
+    if (number >= 10) return number.toFixed(1);
+    return number.toFixed(2);
 }
 </script>
 {% endblock %}

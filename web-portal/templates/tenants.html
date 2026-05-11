@@ -188,9 +188,8 @@ async function loadTenants() {
                     <td><span class="badge ${t.status === 'Active' ? 'bg-success' : t.status === 'Terminating' ? 'bg-warning text-dark' : 'bg-secondary'}">${t.status || 'Unknown'}</span></td>
                     <td>${formatDate(t.created)}</td>
                     <td class="text-end">
-                        <a href="http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace=${t.name}&refresh=15s&theme=light"
-                           target="_blank" class="btn btn-sm btn-outline-primary me-1">
-                            <i class="bi bi-graph-up"></i> Grafana
+                        <a href="/resources/${t.name}" class="btn btn-sm btn-outline-primary me-1">
+                            <i class="bi bi-activity"></i> Live Usage
                         </a>
                         ${IS_PLATFORM_ADMIN ? `
                         <button class="btn btn-sm btn-outline-danger" onclick="promptDelete('${t.name}')">

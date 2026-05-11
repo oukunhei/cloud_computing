@@ -47,6 +47,30 @@ METRIC_NETPOL_COUNT = Gauge(
     ['namespace'],
     registry=prom_registry
 )
+METRIC_NS_CPU_MILLICORES = Gauge(
+    'k8s_namespace_cpu_usage_millicores',
+    'Live CPU usage in millicores from the Kubernetes Metrics API',
+    ['namespace'],
+    registry=prom_registry
+)
+METRIC_NS_MEMORY_MIB = Gauge(
+    'k8s_namespace_memory_usage_mib',
+    'Live memory usage in MiB from the Kubernetes Metrics API',
+    ['namespace'],
+    registry=prom_registry
+)
+METRIC_POD_CPU_MILLICORES = Gauge(
+    'k8s_pod_cpu_usage_millicores',
+    'Live pod CPU usage in millicores from the Kubernetes Metrics API',
+    ['namespace', 'pod'],
+    registry=prom_registry
+)
+METRIC_POD_MEMORY_MIB = Gauge(
+    'k8s_pod_memory_usage_mib',
+    'Live pod memory usage in MiB from the Kubernetes Metrics API',
+    ['namespace', 'pod'],
+    registry=prom_registry
+)
 
 _metrics_lock = threading.Lock()
 _metrics_cache_ttl = 15  # seconds
@@ -142,6 +166,20 @@ def _collect_metrics():
             METRIC_NETPOL_COUNT.labels(namespace=namespace).set(len(np_list.items))
         except Exception:
             METRIC_NETPOL_COUNT.labels(namespace=namespace).set(0)
+
+        # --- Live pod usage from metrics-server ---
+        usage = k8s.get_namespace_live_usage(namespace)
+        if usage.get('metrics_available'):
+            totals = usage.get('totals') or {}
+            METRIC_NS_CPU_MILLICORES.labels(namespace=namespace).set(totals.get('cpu_millicores', 0))
+            METRIC_NS_MEMORY_MIB.labels(namespace=namespace).set(totals.get('memory_mib', 0))
+            for pod in usage.get('pods', []):
+                METRIC_POD_CPU_MILLICORES.labels(namespace=namespace, pod=pod['name']).set(
+                    pod.get('cpu_millicores', 0)
+                )
+                METRIC_POD_MEMORY_MIB.labels(namespace=namespace, pod=pod['name']).set(
+                    pod.get('memory_mib', 0)
+                )
 
     # Update cache timestamp after successful full scan
     _metrics_cached_at = time.time()
@@ -308,8 +346,7 @@ def tenants():
 def resources_page(namespace):
     if not can_use_namespace(namespace):
         return redirect(url_for('dashboard'))
-    grafana_url = f"http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace={namespace}&refresh=15s&kiosk=tv&theme=light"
-    return redirect(grafana_url)
+    return render_template('resources.html', namespace=namespace)
 
 
 @app.route('/kubeconfig')
@@ -388,6 +425,13 @@ def api_delete_tenant(name):
 @require_namespace_access
 def api_namespace_resources(namespace):
     return jsonify(k8s.get_namespace_resources(namespace))
+
+
+@app.route('/api/namespaces/<namespace>/live-usage')
+@require_login
+@require_namespace_access
+def api_namespace_live_usage(namespace):
+    return jsonify(k8s.get_namespace_live_usage(namespace))
 
 
 @app.route('/api/namespaces/<namespace>/resource-settings', methods=['GET'])
