@@ -15,6 +15,7 @@ class K8sClient:
         self.rbac_v1 = None
         self.apps_v1 = None
         self.net_v1 = None
+        self.custom_api = None
         self._init_client()
 
     def _init_client(self):
@@ -28,6 +29,7 @@ class K8sClient:
             self.rbac_v1 = client.RbacAuthorizationV1Api()
             self.apps_v1 = client.AppsV1Api()
             self.net_v1 = client.NetworkingV1Api()
+            self.custom_api = client.CustomObjectsApi()
             self.connected = True
         except Exception:
             self.connected = False
@@ -203,6 +205,104 @@ class K8sClient:
             result['networkpolicies'] = []
 
         return result
+
+    def get_namespace_live_usage(self, namespace):
+        if not self.connected:
+            return {'error': 'Not connected to Kubernetes'}
+
+        result = {
+            'namespace': namespace,
+            'metrics_available': False,
+            'pods': [],
+            'totals': {
+                'cpu_cores': 0,
+                'cpu_millicores': 0,
+                'memory_mib': 0
+            },
+            'quota': self._namespace_quota_summary(namespace)
+        }
+
+        try:
+            pod_metrics = self.custom_api.list_namespaced_custom_object(
+                group='metrics.k8s.io',
+                version='v1beta1',
+                namespace=namespace,
+                plural='pods'
+            )
+        except Exception as e:
+            result['metrics_error'] = (
+                'Kubernetes Metrics API is not available. Install metrics-server '
+                f'or wait for it to publish pod metrics. Detail: {e}'
+            )
+            return result
+
+        result['metrics_available'] = True
+        for item in pod_metrics.get('items', []):
+            pod_cpu = 0
+            pod_memory = 0
+            containers = []
+            for c in item.get('containers', []):
+                usage = c.get('usage') or {}
+                cpu_cores = self._parse_cpu_cores(usage.get('cpu'))
+                memory_mib = self._parse_memory_mib(usage.get('memory'))
+                pod_cpu += cpu_cores
+                pod_memory += memory_mib
+                containers.append({
+                    'name': c.get('name', ''),
+                    'cpu_cores': cpu_cores,
+                    'cpu_millicores': round(cpu_cores * 1000, 3),
+                    'memory_mib': round(memory_mib, 3)
+                })
+
+            result['pods'].append({
+                'name': item.get('metadata', {}).get('name', ''),
+                'timestamp': item.get('timestamp', ''),
+                'cpu_cores': pod_cpu,
+                'cpu_millicores': round(pod_cpu * 1000, 3),
+                'memory_mib': round(pod_memory, 3),
+                'containers': containers
+            })
+            result['totals']['cpu_cores'] += pod_cpu
+            result['totals']['memory_mib'] += pod_memory
+
+        result['pods'] = sorted(result['pods'], key=lambda p: p['name'])
+        result['totals']['cpu_cores'] = round(result['totals']['cpu_cores'], 6)
+        result['totals']['cpu_millicores'] = round(result['totals']['cpu_cores'] * 1000, 3)
+        result['totals']['memory_mib'] = round(result['totals']['memory_mib'], 3)
+        self._add_usage_percentages(result)
+        return result
+
+    def _namespace_quota_summary(self, namespace):
+        summary = {'hard': {}, 'used': {}}
+        try:
+            quotas = self.v1.list_namespaced_resource_quota(namespace)
+            for q in quotas.items:
+                hard = q.spec.hard or {}
+                used = (q.status.used if q.status else {}) or {}
+                summary['hard'].update(dict(hard))
+                summary['used'].update(dict(used))
+        except Exception:
+            pass
+        return summary
+
+    def _add_usage_percentages(self, usage):
+        hard = usage.get('quota', {}).get('hard', {})
+        cpu_limit = self._parse_cpu_cores(hard.get('limits.cpu') or hard.get('requests.cpu'))
+        memory_limit = self._parse_memory_mib(hard.get('limits.memory') or hard.get('requests.memory'))
+
+        usage['totals']['cpu_percent'] = (
+            round(usage['totals']['cpu_cores'] / cpu_limit * 100, 2)
+            if cpu_limit > 0 else None
+        )
+        usage['totals']['memory_percent'] = (
+            round(usage['totals']['memory_mib'] / memory_limit * 100, 2)
+            if memory_limit > 0 else None
+        )
+        usage['limits'] = {
+            'cpu_cores': cpu_limit,
+            'cpu_millicores': round(cpu_limit * 1000, 3),
+            'memory_mib': round(memory_limit, 3)
+        }
 
     def _demo_workload_name(self, owner):
         safe_owner = ''.join(c if c.isalnum() else '-' for c in owner.lower()).strip('-')
@@ -560,6 +660,54 @@ class K8sClient:
             return int(val)
         except ValueError:
             return 0
+
+    def _parse_cpu_cores(self, value):
+        if not value:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        val = str(value).strip()
+        suffixes = {
+            'n': 1_000_000_000,
+            'u': 1_000_000,
+            'm': 1_000
+        }
+        for suffix, divisor in suffixes.items():
+            if val.endswith(suffix):
+                try:
+                    return float(val[:-len(suffix)]) / divisor
+                except ValueError:
+                    return 0.0
+        try:
+            return float(val)
+        except ValueError:
+            return 0.0
+
+    def _parse_memory_mib(self, value):
+        if not value:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value) / (1024 * 1024)
+        val = str(value).strip()
+        suffixes = {
+            'Ki': 1 / 1024,
+            'Mi': 1,
+            'Gi': 1024,
+            'Ti': 1024 * 1024,
+            'K': 1000 / (1024 * 1024),
+            'M': 1000 * 1000 / (1024 * 1024),
+            'G': 1000 * 1000 * 1000 / (1024 * 1024)
+        }
+        for suffix, multiplier in suffixes.items():
+            if val.endswith(suffix):
+                try:
+                    return float(val[:-len(suffix)]) * multiplier
+                except ValueError:
+                    return 0.0
+        try:
+            return float(val) / (1024 * 1024)
+        except ValueError:
+            return 0.0
 
     def _format_age(self, dt):
         if not dt:
