@@ -85,7 +85,7 @@ Isolation is enforced through **three complementary layers** (defense in depth):
 | **Network Isolation** | `NetworkPolicy` (deny ingress + scoped egress + allow intra-NS + allow DNS) | Cross-namespace pod-to-pod traffic; unauthorized inbound connections |
 | **Pod Isolation** | Namespace Pod Security labels (`baseline` enforce, `restricted` warn/audit) | Privileged pods, host networking, hostPath-style misuse |
 
-**Key Design Decision**: Kubernetes RBAC is additive and has no explicit deny rule. This platform therefore follows least privilege: sensitive resources such as `secrets`, `roles`, `rolebindings`, `resourcequotas`, `limitranges`, and `networkpolicies` are simply not granted to developer/viewer roles. User ServiceAccounts are stored outside tenant namespaces, so a developer cannot create a pod that mounts the tenant-admin token.
+**Key Design Decision**: Kubernetes RBAC is additive and has no explicit deny rule. This platform therefore follows least privilege: `secrets`, `roles`, `rolebindings`, and `networkpolicies` are not granted to developer/viewer roles. `resourcequotas` and `limitranges` are granted read-only access to developers and viewers so they can inspect capacity and defaults, but write access is reserved for cluster and tenant admins. User ServiceAccounts are stored outside tenant namespaces, so a developer cannot create a pod that mounts the tenant-admin token.
 
 ### 3. RBAC Design
 
@@ -439,7 +439,7 @@ Use this flow to demonstrate resource and permission differences directly in the
 3. Open **Resources** for `team-alpha`.
 4. In **Role Action Lab**, click **Create Admin Demo**. A `lab-demo-admin` Deployment and Service are created, and the Pod list refreshes.
 5. Click **Run Permission Checks**. The page runs `kubectl auth can-i --as=system:serviceaccount:lab-platform-users:team-alpha-admin ...` and shows which actions are allowed or denied.
-6. Log out, log in as `developer`, and open the same namespace. The developer can create/delete its own `lab-demo-developer` workload while `lab-demo-admin` remains separate; permission checks show denial for `secrets`, `resourcequotas`, and RBAC modification.
+6. Log out, log in as `developer`, and open the same namespace. The developer can create/delete its own `lab-demo-developer` workload while `lab-demo-admin` remains separate; permission checks show denial for `secrets` and RBAC modification.
 7. Log out, log in as `viewer`, and open the same namespace. The viewer can inspect resources and run permission checks, while create/delete workload buttons are disabled.
 
 This browser flow shows both platform UX controls and live Kubernetes RBAC checks.
@@ -453,9 +453,12 @@ export KUBECONFIG=./team-alpha-dev-kubeconfig
 kubectl get pods
 kubectl create deployment nginx --image=nginx
 
+# Should SUCCEED
+kubectl get resourcequota
+kubectl get limitranges
+
 # Should FAIL (forbidden)
 kubectl get secrets
-kubectl get resourcequota
 kubectl get networkpolicy
 kubectl get roles
 ```

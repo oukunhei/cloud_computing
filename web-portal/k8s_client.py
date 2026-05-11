@@ -109,13 +109,79 @@ class K8sClient:
 
         return result.stdout
 
-    def delete_tenant(self, name):
+    def delete_tenant(self, name, force=False):
         if not self.connected:
             raise RuntimeError('Not connected to Kubernetes')
         if name in SYSTEM_NAMESPACES:
             raise ValueError("Cannot delete system namespace")
 
+        # Check if namespace still exists
+        try:
+            ns = self.v1.read_namespace(name=name)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                ns = None
+            else:
+                raise
+
+        if ns is None:
+            # Already gone, just clean up service accounts
+            for suffix in ('admin', 'dev', 'view'):
+                try:
+                    self.v1.delete_namespaced_service_account(
+                        name=f"{name}-{suffix}",
+                        namespace=USER_NAMESPACE
+                    )
+                except Exception:
+                    pass
+            return f"Namespace {name} was already deleted"
+
+        if force:
+            # Aggressively delete namespace contents first so that PVCs,
+            # pods, and other namespaced resources don't block termination.
+            if shutil.which('kubectl'):
+                resource_types = [
+                    'pods', 'deployments', 'replicasets', 'statefulsets',
+                    'daemonsets', 'jobs', 'services',
+                    'persistentvolumeclaims', 'configmaps', 'secrets',
+                    'serviceaccounts', 'resourcequotas', 'limitranges',
+                    'networkpolicies', 'roles', 'rolebindings'
+                ]
+                for rt in resource_types:
+                    try:
+                        cmd = [
+                            'kubectl', 'delete', rt, '--all',
+                            '-n', name,
+                            '--grace-period=0', '--force',
+                            '--wait=false'
+                        ]
+                        subprocess.run(
+                            cmd, capture_output=True, text=True, timeout=10
+                        )
+                    except Exception:
+                        pass
+
+            # Remove namespace-level finalizers via the finalize sub-resource
+            if ns.metadata.finalizers:
+                ns.metadata.finalizers = []
+                try:
+                    self.v1.replace_namespace_finalize(name=name, body=ns)
+                except client.exceptions.ApiException:
+                    pass
+
         self.v1.delete_namespace(name=name)
+
+        if force:
+            # If namespace is still present, try clearing finalizers once more
+            try:
+                ns = self.v1.read_namespace(name=name)
+                if ns and ns.metadata.finalizers:
+                    ns.metadata.finalizers = []
+                    self.v1.replace_namespace_finalize(name=name, body=ns)
+            except client.exceptions.ApiException as e:
+                if e.status != 404:
+                    pass
+
         for suffix in ('admin', 'dev', 'view'):
             try:
                 self.v1.delete_namespaced_service_account(
@@ -125,6 +191,29 @@ class K8sClient:
             except Exception:
                 pass
         return f"Namespace {name} deleted"
+
+    def apply_quota_overrides(self, namespace, quota_overrides):
+        if not self.connected:
+            raise RuntimeError('Not connected to Kubernetes')
+        if not quota_overrides:
+            return
+
+        hard = {k: str(v) for k, v in quota_overrides.items() if v is not None}
+        try:
+            quota = self.v1.read_namespaced_resource_quota(name='team-quota', namespace=namespace)
+            current_hard = dict(quota.spec.hard) if quota.spec.hard else {}
+            current_hard.update(hard)
+            quota.spec.hard = current_hard
+            self.v1.replace_namespaced_resource_quota(name='team-quota', namespace=namespace, body=quota)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                body = client.V1ResourceQuota(
+                    metadata=client.V1ObjectMeta(name='team-quota', namespace=namespace),
+                    spec=client.V1ResourceQuotaSpec(hard=hard)
+                )
+                self.v1.create_namespaced_resource_quota(namespace=namespace, body=body)
+            else:
+                raise
 
     def get_namespace_resources(self, namespace):
         if not self.connected:

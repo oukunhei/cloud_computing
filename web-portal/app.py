@@ -211,6 +211,7 @@ def api_list_tenants():
 def api_create_tenant():
     data = request.get_json() or {}
     name = data.get('name', '').strip().lower()
+    quota = data.get('quota') or {}
 
     if not name:
         return jsonify({'error': 'Namespace name is required'}), 400
@@ -220,6 +221,8 @@ def api_create_tenant():
 
     try:
         output = k8s.create_tenant(name)
+        if quota:
+            k8s.apply_quota_overrides(name, quota)
         return jsonify({'success': True, 'output': output})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -229,8 +232,9 @@ def api_create_tenant():
 @require_login
 @require_admin_api
 def api_delete_tenant(name):
+    force = request.args.get('force', 'false').lower() == 'true'
     try:
-        result = k8s.delete_tenant(name)
+        result = k8s.delete_tenant(name, force=force)
         return jsonify({'success': True, 'message': result})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
