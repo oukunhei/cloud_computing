@@ -1,9 +1,137 @@
 import os
 import re
+import threading
+import time
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, Response, redirect, session, url_for
+from prometheus_client import Gauge, generate_latest, CollectorRegistry, CONTENT_TYPE_LATEST
 from k8s_client import k8s
-from config import ROLE_PERMISSIONS, FLASK_PORT, SECRET_KEY
+from config import ROLE_PERMISSIONS, FLASK_PORT, SECRET_KEY, SYSTEM_NAMESPACES, USER_NAMESPACE
+
+# ── Prometheus metrics ──────────────────────────────────────────────
+prom_registry = CollectorRegistry()
+
+METRIC_QUOTA_HARD = Gauge(
+    'k8s_namespace_resource_quota_hard',
+    'ResourceQuota hard limit per namespace',
+    ['namespace', 'resource'],
+    registry=prom_registry
+)
+METRIC_QUOTA_USED = Gauge(
+    'k8s_namespace_resource_quota_used',
+    'ResourceQuota current usage per namespace',
+    ['namespace', 'resource'],
+    registry=prom_registry
+)
+METRIC_QUOTA_PERCENT = Gauge(
+    'k8s_namespace_resource_quota_percent',
+    'ResourceQuota usage percentage (0-100) per namespace',
+    ['namespace', 'resource'],
+    registry=prom_registry
+)
+METRIC_POD_COUNT = Gauge(
+    'k8s_namespace_pod_count',
+    'Number of pods in the namespace',
+    ['namespace'],
+    registry=prom_registry
+)
+METRIC_POD_STATUS = Gauge(
+    'k8s_namespace_pod_status',
+    'Pod status (1=RUNNING, 2=PENDING, 3=FAILED, 0=UNKNOWN)',
+    ['namespace', 'pod'],
+    registry=prom_registry
+)
+METRIC_NETPOL_COUNT = Gauge(
+    'k8s_namespace_networkpolicy_count',
+    'Number of NetworkPolicies in the namespace',
+    ['namespace'],
+    registry=prom_registry
+)
+
+_metrics_lock = threading.Lock()
+_metrics_last_scrape = 0
+_metrics_cache_ttl = 15  # seconds
+
+
+def _resource_to_number(val):
+    """Convert a Kubernetes resource string (e.g. '100m', '2Gi', '10') to a float."""
+    if not val:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if s.endswith('m'):
+        return float(s[:-1]) / 1000.0
+    if s.endswith('Gi'):
+        return float(s[:-2]) * 1024.0
+    if s.endswith('Mi'):
+        return float(s[:-2])
+    if s.endswith('Ki'):
+        return float(s[:-2]) / 1024.0
+    if s.endswith('Ti'):
+        return float(s[:-2]) * 1024.0 * 1024.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _collect_metrics():
+    """Query Kubernetes API and refresh all Prometheus metrics."""
+    global _metrics_last_scrape
+    with _metrics_lock:
+        now = time.time()
+        if now - _metrics_last_scrape < _metrics_cache_ttl:
+            return  # cache still valid
+        _metrics_last_scrape = now
+
+    if not k8s.is_connected():
+        return
+
+    try:
+        ns_list = k8s.v1.list_namespace()
+    except Exception:
+        return
+
+    for ns in ns_list.items:
+        namespace = ns.metadata.name
+
+        # --- Pods ---
+        try:
+            pods = k8s.v1.list_namespaced_pod(namespace)
+            METRIC_POD_COUNT.labels(namespace=namespace).set(len(pods.items))
+            for p in pods.items:
+                phase = p.status.phase or 'Unknown'
+                status_map = {'Running': 1, 'Pending': 2, 'Failed': 3, 'Succeeded': 1}
+                METRIC_POD_STATUS.labels(namespace=namespace, pod=p.metadata.name).set(
+                    status_map.get(phase, 0)
+                )
+        except Exception:
+            METRIC_POD_COUNT.labels(namespace=namespace).set(0)
+
+        # --- ResourceQuota ---
+        try:
+            quotas = k8s.v1.list_namespaced_resource_quota(namespace)
+            for q in quotas.items:
+                hard = q.spec.hard or {}
+                used = (q.status.used if q.status else {}) or {}
+                for resource_key, hard_val in hard.items():
+                    hard_num = _resource_to_number(hard_val)
+                    used_num = _resource_to_number(used.get(resource_key, '0'))
+                    pct = (used_num / hard_num * 100.0) if hard_num > 0 else 0.0
+                    METRIC_QUOTA_HARD.labels(namespace=namespace, resource=resource_key).set(hard_num)
+                    METRIC_QUOTA_USED.labels(namespace=namespace, resource=resource_key).set(used_num)
+                    METRIC_QUOTA_PERCENT.labels(namespace=namespace, resource=resource_key).set(pct)
+        except Exception:
+            pass
+
+        # --- NetworkPolicies ---
+        try:
+            np_list = k8s.net_v1.list_namespaced_network_policy(namespace)
+            METRIC_NETPOL_COUNT.labels(namespace=namespace).set(len(np_list.items))
+        except Exception:
+            METRIC_NETPOL_COUNT.labels(namespace=namespace).set(0)
+
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.secret_key = SECRET_KEY
@@ -325,6 +453,13 @@ def api_generate_kubeconfig(namespace):
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/metrics')
+def metrics():
+    """Prometheus metrics endpoint — scraped by Prometheus for Grafana dashboards."""
+    _collect_metrics()
+    return Response(generate_latest(prom_registry), mimetype=CONTENT_TYPE_LATEST)
 
 
 if __name__ == '__main__':

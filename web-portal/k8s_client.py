@@ -402,6 +402,10 @@ class K8sClient:
         def is_allowed(resource, verb='read'):
             """Check if the role is allowed based on ROLE_PERMISSIONS config."""
             if portal_role in ('cluster-admin', 'admin'):
+                # cluster-admin can do everything including delete
+                # admin (tenant admin) cannot delete namespaces
+                if verb == 'delete':
+                    return portal_role == 'cluster-admin'
                 return True
             if verb in ('read', 'list', 'get'):
                 return resource in can_read
@@ -423,7 +427,7 @@ class K8sClient:
             {'label': 'Modify NetworkPolicy',         'allowed': portal_role in ('cluster-admin', 'admin')},
             {'label': 'Modify RBAC roles',            'allowed': portal_role in ('cluster-admin', 'admin')},
             {'label': 'Exec into pods',               'allowed': portal_role in ('cluster-admin', 'admin') or can_exec},
-            {'label': 'Delete namespaces',            'allowed': False},
+            {'label': 'Delete namespaces',            'allowed': is_allowed('namespaces', 'delete')},
         ]
 
         results = []
