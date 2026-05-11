@@ -181,8 +181,9 @@ document.addEventListener('DOMContentLoaded', async () => {
                         <td><span class="badge bg-success">${t.status}</span></td>
                         <td>${formatDate(t.created)}</td>
                         <td>
-                            <a href="/resources/${t.name}" class="btn btn-sm btn-outline-primary">
-                                <i class="bi bi-graph-up"></i> Resources
+                            <a href="http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace=${t.name}&refresh=15s&theme=light"
+                               target="_blank" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-graph-up"></i> Grafana
                             </a>
                         </td>
                     </tr>

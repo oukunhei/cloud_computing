@@ -294,7 +294,8 @@ def tenants():
 def resources_page(namespace):
     if not can_use_namespace(namespace):
         return redirect(url_for('dashboard'))
-    return render_template('resources.html', namespace=namespace)
+    grafana_url = f"http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace={namespace}&refresh=15s&kiosk=tv&theme=light"
+    return redirect(grafana_url)
 
 
 @app.route('/kubeconfig')
