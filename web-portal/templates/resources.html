@@ -2,7 +2,7 @@
 {% block title %}Resources - {{ namespace }}{% endblock %}
 
 {% block content %}
-<div class="row mb-4">
+<div class="row mb-3">
     <div class="col">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
@@ -21,6 +21,43 @@
             scoped to <code>{{ identity.namespace }}</code>
             {% endif %}
         </p>
+    </div>
+</div>
+
+<!-- Grafana Dashboard Embed -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                <span>
+                    <img src="https://grafana.com/static/assets/img/fav32.png" width="20" height="20" class="me-2" alt="Grafana">
+                    Resource Monitoring — Grafana Dashboard
+                </span>
+                <div>
+                    <a href="http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace={{ namespace }}&refresh=15s" 
+                       target="_blank" class="btn btn-sm btn-outline-light me-1" title="Open in Grafana">
+                        <i class="bi bi-box-arrow-up-right"></i> Open in Grafana
+                    </a>
+                    <button class="btn btn-sm btn-outline-light" onclick="toggleGrafanaFullscreen()" title="Toggle Fullscreen">
+                        <i class="bi bi-arrows-fullscreen"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card-body p-0" id="grafana-container" style="height: 700px; position: relative;">
+                <div class="d-flex justify-content-center align-items-center h-100" id="grafana-loading">
+                    <div class="text-center">
+                        <div class="spinner-border text-primary mb-3" role="status"></div>
+                        <p class="text-muted">Loading Grafana dashboard…</p>
+                    </div>
+                </div>
+                <iframe id="grafana-frame"
+                        src="http://localhost:3000/d/k8s-namespace-resources/k8s-namespace-resource-dashboard?orgId=1&var-namespace={{ namespace }}&refresh=15s&kiosk=tv&theme=light"
+                        style="width: 100%; height: 100%; border: 0; display: none;"
+                        onload="document.getElementById('grafana-loading').style.display='none'; this.style.display='block';"
+                        >
+                </iframe>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -86,49 +123,7 @@
         </div>
     </div>
 
-    <!-- ResourceQuota -->
-    <div class="col-md-6">
-        <div class="card h-100">
-            <div class="card-header bg-primary text-white">
-                <i class="bi bi-speedometer me-2"></i>Resource Quota
-            </div>
-            <div class="card-body" id="quota-body">
-                <div class="text-center">
-                    <div class="spinner-border text-primary" role="status"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- LimitRange -->
-    <div class="col-md-6">
-        <div class="card h-100">
-            <div class="card-header bg-info text-white">
-                <i class="bi bi-sliders me-2"></i>Limit Range
-            </div>
-            <div class="card-body" id="limit-body">
-                <div class="text-center">
-                    <div class="spinner-border text-info" role="status"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- NetworkPolicies -->
-    <div class="col-md-12">
-        <div class="card">
-            <div class="card-header bg-dark text-white">
-                <i class="bi bi-shield-check me-2"></i>Network Policies
-            </div>
-            <div class="card-body" id="np-body">
-                <div class="text-center">
-                    <div class="spinner-border text-secondary" role="status"></div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <!-- Pods -->
+    <!-- Pods (kept as lightweight table) -->
     <div class="col-md-12">
         <div class="card">
             <div class="card-header bg-success text-white d-flex justify-content-between align-items-center">
@@ -166,9 +161,25 @@
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
     loadNamespaceResources();
+    // Fallback: show warning if Grafana iframe hasn't loaded after 10s
+    setTimeout(() => {
+        const loading = document.getElementById('grafana-loading');
+        if (loading && loading.style.display !== 'none') {
+            loading.innerHTML = '<div class="alert alert-warning m-3"><i class="bi bi-exclamation-triangle me-2"></i>Grafana is not reachable at <code>localhost:3000</code>. Start it with: <code>docker compose up -d prometheus grafana</code></div>';
+        }
+    }, 10000);
 });
 
 const ns = '{{ namespace }}';
+
+function toggleGrafanaFullscreen() {
+    const container = document.getElementById('grafana-container');
+    if (!document.fullscreenElement) {
+        container.requestFullscreen().catch(e => {});
+    } else {
+        document.exitFullscreen();
+    }
+}
 
 function showActionResult(message, type = 'success') {
     const el = document.getElementById('action-result');
@@ -185,6 +196,9 @@ async function createDemoWorkload() {
         }
         showActionResult(result.message, 'success');
         await loadNamespaceResources();
+        // Refresh Grafana iframe
+        const frame = document.getElementById('grafana-frame');
+        if (frame) frame.src = frame.src;
     } catch (e) {
         showActionResult('Failed to create demo workload', 'danger');
     }
@@ -199,6 +213,8 @@ async function deleteDemoWorkload() {
         }
         showActionResult(result.message, 'success');
         await loadNamespaceResources();
+        const frame = document.getElementById('grafana-frame');
+        if (frame) frame.src = frame.src;
     } catch (e) {
         showActionResult('Failed to delete demo workload', 'danger');
     }
@@ -240,68 +256,7 @@ async function loadNamespaceResources() {
             return;
         }
 
-        // Quota
-        const quotaBody = document.getElementById('quota-body');
-        if (data.quota) {
-            const hard = data.quota.hard;
-            const used = data.quota.used;
-            let html = '<table class="table table-sm">';
-            html += '<thead><tr><th>Resource</th><th>Used</th><th>Hard</th><th>Usage</th></tr></thead><tbody>';
-            for (const [key, hval] of Object.entries(hard)) {
-                const uval = used[key] || '0';
-                const pct = parsePercent(uval, hval);
-                html += `<tr>
-                    <td><code>${key}</code></td>
-                    <td>${uval}</td>
-                    <td>${hval}</td>
-                    <td>
-                        <div class="progress" style="height: 20px;">
-                            <div class="progress-bar ${pct > 80 ? 'bg-danger' : pct > 50 ? 'bg-warning' : 'bg-success'}" 
-                                 style="width: ${pct}%">${pct}%</div>
-                        </div>
-                    </td>
-                </tr>`;
-            }
-            html += '</tbody></table>';
-            quotaBody.innerHTML = html;
-        } else {
-            quotaBody.innerHTML = '<p class="text-muted">No ResourceQuota found.</p>';
-        }
-
-        // LimitRange
-        const limitBody = document.getElementById('limit-body');
-        if (data.limitrange) {
-            let html = '<table class="table table-sm">';
-            html += '<thead><tr><th>Type</th><th>Default</th><th>Default Request</th><th>Min</th><th>Max</th><th>Max Ratio</th></tr></thead><tbody>';
-            html += data.limitrange.limits.map(limit => {
-                const defaultRequest = limit.defaultRequest || limit.default_request;
-                const ratio = limit.maxLimitRequestRatio || limit.max_limit_request_ratio;
-                return `<tr>
-                    <td><code>${limit.type}</code></td>
-                    <td>${formatResourceMap(limit.default)}</td>
-                    <td>${formatResourceMap(defaultRequest)}</td>
-                    <td>${formatResourceMap(limit.min)}</td>
-                    <td>${formatResourceMap(limit.max)}</td>
-                    <td>${formatResourceMap(ratio)}</td>
-                </tr>`;
-            }).join('');
-            html += '</tbody></table>';
-            limitBody.innerHTML = html;
-        } else {
-            limitBody.innerHTML = '<p class="text-muted">No LimitRange found.</p>';
-        }
-
-        // NetworkPolicies
-        const npBody = document.getElementById('np-body');
-        if (data.networkpolicies && data.networkpolicies.length > 0) {
-            npBody.innerHTML = `<div class="d-flex flex-wrap gap-2">
-                ${data.networkpolicies.map(np => `<span class="badge bg-secondary fs-6"><i class="bi bi-shield-fill me-1"></i>${np}</span>`).join('')}
-            </div>`;
-        } else {
-            npBody.innerHTML = '<p class="text-muted">No NetworkPolicies found.</p>';
-        }
-
-        // Pods
+        // Pods — keep as lightweight table complementing Grafana
         if (data.pods && data.pods.length > 0) {
             document.getElementById('pod-count').textContent = data.pods.length;
             document.getElementById('pod-table').classList.remove('d-none');
@@ -327,20 +282,6 @@ async function loadNamespaceResources() {
     } catch (e) {
         showError('Failed to load namespace resources');
     }
-}
-
-function parsePercent(used, hard) {
-    const u = parseFloat(used);
-    const h = parseFloat(hard);
-    if (isNaN(u) || isNaN(h) || h === 0) return 0;
-    return Math.min(100, Math.round((u / h) * 100));
-}
-
-function formatResourceMap(values) {
-    if (!values || Object.keys(values).length === 0) return '-';
-    return Object.entries(values)
-        .map(([key, value]) => `<code>${key}</code>: ${value}`)
-        .join('<br>');
 }
 </script>
 {% endblock %}
