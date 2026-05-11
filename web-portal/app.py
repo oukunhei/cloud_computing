@@ -49,8 +49,15 @@ METRIC_NETPOL_COUNT = Gauge(
 )
 
 _metrics_lock = threading.Lock()
-_metrics_last_scrape = 0
 _metrics_cache_ttl = 15  # seconds
+_metrics_cached_data = None
+_metrics_cached_at = 0
+
+METRIC_UP = Gauge(
+    'k8s_portal_up',
+    'Whether the K8s portal metrics collector is connected (1=connected, 0=disconnected)',
+    registry=prom_registry
+)
 
 
 def _resource_to_number(val):
@@ -78,15 +85,19 @@ def _resource_to_number(val):
 
 def _collect_metrics():
     """Query Kubernetes API and refresh all Prometheus metrics."""
-    global _metrics_last_scrape
-    with _metrics_lock:
-        now = time.time()
-        if now - _metrics_last_scrape < _metrics_cache_ttl:
-            return  # cache still valid
-        _metrics_last_scrape = now
+    global _metrics_cached_at
 
-    if not k8s.is_connected():
+    # Always check connection status and set up metric
+    connected = k8s.is_connected()
+    METRIC_UP.set(1 if connected else 0)
+
+    if not connected:
         return
+
+    # Check cache: skip K8s API queries if data is fresh
+    with _metrics_lock:
+        if time.time() - _metrics_cached_at < _metrics_cache_ttl:
+            return
 
     try:
         ns_list = k8s.v1.list_namespace()
@@ -131,6 +142,9 @@ def _collect_metrics():
             METRIC_NETPOL_COUNT.labels(namespace=namespace).set(len(np_list.items))
         except Exception:
             METRIC_NETPOL_COUNT.labels(namespace=namespace).set(0)
+
+    # Update cache timestamp after successful full scan
+    _metrics_cached_at = time.time()
 
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
