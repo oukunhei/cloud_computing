@@ -96,10 +96,10 @@ ok "Kubeconfig is readable: $KUBECONFIG_HOST_PATH"
 log "Running preflight checks"
 KUBECONFIG_HOST_PATH="$KUBECONFIG_HOST_PATH" HOST_KUBECTL_PATH="$HOST_KUBECTL_PATH" FLASK_PORT="$FLASK_PORT" ./scripts/check-prereqs.sh
 
-log "Starting web portal"
+log "Starting all services (web, prometheus, grafana)"
 compose up -d --build
 
-log "Waiting for portal HTTP endpoint"
+log "Waiting for portal HTTP endpoint (port ${FLASK_PORT})"
 for i in {1..60}; do
     if curl -fsS "http://127.0.0.1:${FLASK_PORT}/login" >/dev/null 2>&1; then
         ok "Portal is reachable at http://127.0.0.1:${FLASK_PORT}"
@@ -109,6 +109,26 @@ for i in {1..60}; do
         compose logs --tail=80 web || true
         fail "Portal did not become reachable on port $FLASK_PORT."
     fi
+    sleep 2
+done
+
+log "Waiting for Prometheus (port 9090)"
+for i in {1..30}; do
+    if curl -fsS "http://127.0.0.1:9090/-/healthy" >/dev/null 2>&1; then
+        ok "Prometheus is ready at http://127.0.0.1:9090"
+        break
+    fi
+    [ "$i" -eq 30 ] && warn "Prometheus did not become reachable (non-fatal)"
+    sleep 2
+done
+
+log "Waiting for Grafana (port 3000)"
+for i in {1..30}; do
+    if curl -fsS "http://127.0.0.1:3000/api/health" >/dev/null 2>&1; then
+        ok "Grafana is ready at http://127.0.0.1:3000"
+        break
+    fi
+    [ "$i" -eq 30 ] && warn "Grafana did not become reachable (non-fatal)"
     sleep 2
 done
 
@@ -131,7 +151,9 @@ cat <<EOF
 ${GREEN}Lab platform is running.${NC}
 
 Open:
-  http://127.0.0.1:${FLASK_PORT}/login
+  Portal:   http://127.0.0.1:${FLASK_PORT}/login
+  Grafana:  http://127.0.0.1:3000  (admin / admin)
+  Prometheus: http://127.0.0.1:9090
 
 Useful commands:
   docker compose logs -f web
