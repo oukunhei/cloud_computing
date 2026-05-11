@@ -2,6 +2,8 @@ import os
 import subprocess
 import shutil
 import yaml
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from kubernetes import client, config
 from config import SYSTEM_NAMESPACES, USER_NAMESPACE
@@ -272,6 +274,23 @@ class K8sClient:
         self._add_usage_percentages(result)
         return result
 
+    def get_monitoring_diagnostics(self, namespace):
+        diagnostics = {
+            'namespace': namespace,
+            'kubernetes_connected': self.is_connected(),
+            'grafana': self._check_http_endpoint('http://127.0.0.1:3000/api/health'),
+            'prometheus': self._check_http_endpoint('http://127.0.0.1:9090/-/healthy'),
+            'portal_metrics': self._check_http_endpoint('http://127.0.0.1:8080/metrics')
+        }
+
+        metrics_usage = self.get_namespace_live_usage(namespace)
+        diagnostics['metrics_api'] = {
+            'available': metrics_usage.get('metrics_available', False),
+            'error': metrics_usage.get('metrics_error')
+        }
+
+        return diagnostics
+
     def _namespace_quota_summary(self, namespace):
         summary = {'hard': {}, 'used': {}}
         try:
@@ -303,6 +322,25 @@ class K8sClient:
             'cpu_millicores': round(cpu_limit * 1000, 3),
             'memory_mib': round(memory_limit, 3)
         }
+
+    def _check_http_endpoint(self, url):
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                return {
+                    'reachable': True,
+                    'status': response.getcode()
+                }
+        except urllib.error.HTTPError as e:
+            return {
+                'reachable': False,
+                'status': e.code,
+                'error': str(e)
+            }
+        except Exception as e:
+            return {
+                'reachable': False,
+                'error': str(e)
+            }
 
     def _demo_workload_name(self, owner):
         safe_owner = ''.join(c if c.isalnum() else '-' for c in owner.lower()).strip('-')

@@ -430,6 +430,13 @@ def api_namespace_live_usage(namespace):
     return jsonify(k8s.get_namespace_live_usage(namespace))
 
 
+@app.route('/api/namespaces/<namespace>/monitoring-diagnostics')
+@require_login
+@require_namespace_access
+def api_monitoring_diagnostics(namespace):
+    return jsonify(k8s.get_monitoring_diagnostics(namespace))
+
+
 @app.route('/api/namespaces/<namespace>/resource-settings', methods=['GET'])
 @require_login
 @require_namespace_access
