@@ -8,6 +8,15 @@ SYSTEM_NAMESPACES = {
 }
 
 USER_NAMESPACE = os.environ.get('USER_NAMESPACE', 'lab-platform-users')
+FLASK_PORT = int(os.environ.get('FLASK_PORT', 8080))
+SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-only-change-me')
+GRAFANA_PUBLIC_BASE_URL = os.environ.get('GRAFANA_PUBLIC_BASE_URL', '').strip()
+GRAFANA_INTERNAL_BASE_URL = os.environ.get('GRAFANA_INTERNAL_BASE_URL', 'http://127.0.0.1:3000').rstrip('/')
+PROMETHEUS_INTERNAL_BASE_URL = os.environ.get('PROMETHEUS_INTERNAL_BASE_URL', 'http://127.0.0.1:9090').rstrip('/')
+PORTAL_METRICS_BASE_URL = os.environ.get(
+    'PORTAL_METRICS_BASE_URL',
+    f'http://127.0.0.1:{FLASK_PORT}'
+).rstrip('/')
 
 # Role permissions matrix for display
 ROLE_PERMISSIONS = {
@@ -61,6 +70,3 @@ ROLE_PERMISSIONS = {
         'note': 'Tenant admin is powerful inside one namespace but cannot manage tenant lifecycle.'
     }
 }
-
-FLASK_PORT = int(os.environ.get('FLASK_PORT', 8080))
-SECRET_KEY = os.environ.get('SECRET_KEY', 'dev-only-change-me')
