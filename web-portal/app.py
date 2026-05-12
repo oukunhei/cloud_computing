@@ -72,6 +72,69 @@ METRIC_POD_MEMORY_MIB = Gauge(
     registry=prom_registry
 )
 
+# ── Node-level USE metrics ──────────────────────────────────────────
+
+METRIC_NODE_CONDITION = Gauge(
+    'k8s_node_condition',
+    'Node condition status (1=OK, 0=NotOK)',
+    ['node', 'condition'],
+    registry=prom_registry
+)
+METRIC_NODE_POD_COUNT = Gauge(
+    'k8s_node_pod_count',
+    'Number of pods scheduled on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_POD_CAPACITY = Gauge(
+    'k8s_node_pod_capacity',
+    'Maximum pods allocatable on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_CPU_ALLOCATABLE = Gauge(
+    'k8s_node_cpu_allocatable_cores',
+    'Allocatable CPU cores on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_MEM_ALLOCATABLE = Gauge(
+    'k8s_node_memory_allocatable_mib',
+    'Allocatable memory in MiB on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_CPU_MILLICORES = Gauge(
+    'k8s_node_cpu_usage_millicores',
+    'Live node CPU usage in millicores from the Kubernetes Metrics API',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_MEMORY_MIB = Gauge(
+    'k8s_node_memory_usage_mib',
+    'Live node memory usage in MiB from the Kubernetes Metrics API',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_CPU_UTIL_PCT = Gauge(
+    'k8s_node_cpu_utilization_percent',
+    'Node CPU utilization percentage (usage / allocatable * 100)',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_MEM_UTIL_PCT = Gauge(
+    'k8s_node_memory_utilization_percent',
+    'Node memory utilization percentage (usage / allocatable * 100)',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_POD_UTIL_PCT = Gauge(
+    'k8s_node_pod_utilization_percent',
+    'Node pod slot utilization percentage (pods / max_pods * 100)',
+    ['node'],
+    registry=prom_registry
+)
+
 _metrics_lock = threading.Lock()
 _metrics_cache_ttl = 15  # seconds
 _metrics_cached_data = None
@@ -180,6 +243,56 @@ def _collect_metrics():
                 METRIC_POD_MEMORY_MIB.labels(namespace=namespace, pod=pod['name']).set(
                     pod.get('memory_mib', 0)
                 )
+
+    # ── Node-level USE collection ────────────────────────────────────
+    # Build a lookup of node -> allocatable from nodes_info so we can
+    # compute utilization percentages in one pass.
+    node_allocatable = {}  # node_name -> {cpu_cores, memory_mib, pods}
+
+    try:
+        nodes_info = k8s.get_nodes_info()
+        if not isinstance(nodes_info, dict) or 'error' not in nodes_info:
+            for node in nodes_info:
+                node_name = node['name']
+                node_allocatable[node_name] = {
+                    'cpu_cores': node.get('allocatable_cpu_cores', 0),
+                    'memory_mib': node.get('allocatable_memory_mib', 0),
+                    'pods': node.get('allocatable_pods', 0)
+                }
+                # Conditions (Errors / Health)
+                for cond_name, cond_val in node.get('conditions', {}).items():
+                    METRIC_NODE_CONDITION.labels(node=node_name, condition=cond_name).set(cond_val)
+                # Pod count / capacity (Saturation)
+                METRIC_NODE_POD_COUNT.labels(node=node_name).set(node.get('pods_on_node', 0))
+                METRIC_NODE_POD_CAPACITY.labels(node=node_name).set(node.get('allocatable_pods', 0))
+                pod_pct = (node.get('pods_on_node', 0) / max(node.get('allocatable_pods', 1), 1) * 100.0) if node.get('allocatable_pods', 0) > 0 else 0.0
+                METRIC_NODE_POD_UTIL_PCT.labels(node=node_name).set(pod_pct)
+                # Allocatable capacity (Utilization baseline)
+                METRIC_NODE_CPU_ALLOCATABLE.labels(node=node_name).set(node.get('allocatable_cpu_cores', 0))
+                METRIC_NODE_MEM_ALLOCATABLE.labels(node=node_name).set(node.get('allocatable_memory_mib', 0))
+    except Exception:
+        pass
+
+    # Node live usage from metrics-server (Utilization)
+    try:
+        node_metrics = k8s.get_node_metrics()
+        if node_metrics.get('metrics_available'):
+            for nm in node_metrics.get('nodes', []):
+                node_name = nm['name']
+                cpu_millicores = nm.get('cpu_millicores', 0)
+                memory_mib = nm.get('memory_mib', 0)
+                METRIC_NODE_CPU_MILLICORES.labels(node=node_name).set(cpu_millicores)
+                METRIC_NODE_MEMORY_MIB.labels(node=node_name).set(memory_mib)
+                # Compute utilization % using the allocatable values we already fetched
+                alloc = node_allocatable.get(node_name, {})
+                alloc_cpu = alloc.get('cpu_cores', 0)
+                alloc_mem = alloc.get('memory_mib', 0)
+                cpu_pct = (cpu_millicores / 1000.0 / alloc_cpu * 100.0) if alloc_cpu > 0 else 0.0
+                mem_pct = (memory_mib / alloc_mem * 100.0) if alloc_mem > 0 else 0.0
+                METRIC_NODE_CPU_UTIL_PCT.labels(node=node_name).set(cpu_pct)
+                METRIC_NODE_MEM_UTIL_PCT.labels(node=node_name).set(mem_pct)
+    except Exception:
+        pass
 
     # Update cache timestamp after successful full scan
     _metrics_cached_at = time.time()
