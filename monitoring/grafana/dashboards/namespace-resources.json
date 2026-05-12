@@ -70,7 +70,7 @@
         }
       ],
       "title": "CPU Usage %",
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -115,7 +115,7 @@
         }
       ],
       "title": "Memory Usage %",
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -160,7 +160,7 @@
         }
       ],
       "title": "Object Count Usage %",
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -205,7 +205,7 @@
         }
       ],
       "title": "Storage Usage %",
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "collapsed": false,
@@ -826,7 +826,7 @@
         }
       ],
       "title": "Node CPU Utilization %",
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -871,7 +871,7 @@
         }
       ],
       "title": "Node Memory Utilization %",
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
@@ -916,7 +916,7 @@
         }
       ],
       "title": "Node Pod Slot Utilization %",
-      "type": "gauge"
+      "type": "stat"
     },
     {
       "datasource": { "type": "prometheus", "uid": "prometheus" },
