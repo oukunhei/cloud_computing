@@ -53,7 +53,7 @@
             <div class="card-header bg-dark text-white d-flex flex-wrap gap-2 justify-content-between align-items-center">
                 <span><i class="bi bi-bar-chart-fill me-2"></i>Grafana USE Dashboard — Resource Quota &amp; Node Health</span>
                 <div>
-                    <a href="http://localhost:3000/d/k8s-namespace-resources?orgId=1&var-namespace={{ namespace }}&refresh=15s"
+                    <a href="{{ grafana_dashboard_url }}"
                        target="_blank" class="btn btn-sm btn-outline-light me-1" title="Open full dashboard in Grafana">
                         <i class="bi bi-box-arrow-up-right"></i> Open in Grafana
                     </a>
@@ -64,7 +64,7 @@
             </div>
             <div class="card-body p-0" id="grafana-container" style="height: 800px; position: relative;">
                 <iframe id="grafana-frame"
-                        src="http://localhost:3000/d/k8s-namespace-resources?orgId=1&var-namespace={{ namespace }}&from=now-1h&to=now&refresh=15s&theme=light&kiosk"
+                        src="{{ grafana_embed_url }}"
                         style="width: 100%; height: 100%; border: 0;">
                 </iframe>
             </div>
@@ -171,9 +171,9 @@
 {% block scripts %}
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
-    loadNamespaceResources();
     loadMonitoringDiagnostics();
     setInterval(loadMonitoringDiagnostics, 10000);
+    refreshPodsTable();
 });
 
 const ns = '{{ namespace }}';
@@ -201,7 +201,7 @@ async function createDemoWorkload() {
             return;
         }
         showActionResult(result.message, 'success');
-        await loadNamespaceResources();
+        await refreshPodsTable();
         // Refresh Grafana iframe
         const frame = document.getElementById('grafana-frame');
         if (frame) frame.src = frame.src;
@@ -218,7 +218,7 @@ async function deleteDemoWorkload() {
             return;
         }
         showActionResult(result.message, 'success');
-        await loadNamespaceResources();
+        await refreshPodsTable();
         const frame = document.getElementById('grafana-frame');
         if (frame) frame.src = frame.src;
     } catch (e) {
@@ -254,7 +254,7 @@ async function runPermissionChecks() {
     }
 }
 
-async function loadNamespaceResources() {
+async function refreshPodsTable() {
     try {
         const data = await apiGet(`/api/namespaces/${ns}/resources`);
         if (data.error) {

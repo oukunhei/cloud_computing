@@ -6,7 +6,13 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 from kubernetes import client, config
-from config import SYSTEM_NAMESPACES, USER_NAMESPACE
+from config import (
+    SYSTEM_NAMESPACES,
+    USER_NAMESPACE,
+    GRAFANA_INTERNAL_BASE_URL,
+    PROMETHEUS_INTERNAL_BASE_URL,
+    PORTAL_METRICS_BASE_URL
+)
 
 
 class K8sClient:
@@ -278,9 +284,9 @@ class K8sClient:
         diagnostics = {
             'namespace': namespace,
             'kubernetes_connected': self.is_connected(),
-            'grafana': self._check_http_endpoint('http://127.0.0.1:3000/api/health'),
-            'prometheus': self._check_http_endpoint('http://127.0.0.1:9090/-/healthy'),
-            'portal_metrics': self._check_http_endpoint('http://127.0.0.1:8080/metrics')
+            'grafana': self._check_http_endpoint(f'{GRAFANA_INTERNAL_BASE_URL}/api/health'),
+            'prometheus': self._check_http_endpoint(f'{PROMETHEUS_INTERNAL_BASE_URL}/-/healthy'),
+            'portal_metrics': self._check_http_endpoint(f'{PORTAL_METRICS_BASE_URL}/metrics')
         }
 
         metrics_usage = self.get_namespace_live_usage(namespace)

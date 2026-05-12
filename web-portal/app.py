@@ -2,11 +2,20 @@ import os
 import re
 import threading
 import time
+from urllib.parse import quote_plus
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, Response, redirect, session, url_for
 from prometheus_client import Gauge, generate_latest, CollectorRegistry, CONTENT_TYPE_LATEST
 from k8s_client import k8s
-from config import ROLE_PERMISSIONS, FLASK_PORT, SECRET_KEY, SYSTEM_NAMESPACES, USER_NAMESPACE
+from config import (
+    ROLE_PERMISSIONS,
+    FLASK_PORT,
+    SECRET_KEY,
+    SYSTEM_NAMESPACES,
+    USER_NAMESPACE,
+    GRAFANA_PUBLIC_BASE_URL,
+    GRAFANA_INTERNAL_BASE_URL
+)
 
 # ── Prometheus metrics ──────────────────────────────────────────────
 prom_registry = CollectorRegistry()
@@ -459,7 +468,22 @@ def tenants():
 def resources_page(namespace):
     if not can_use_namespace(namespace):
         return redirect(url_for('dashboard'))
-    return render_template('resources.html', namespace=namespace)
+    grafana_base_url = (GRAFANA_PUBLIC_BASE_URL or GRAFANA_INTERNAL_BASE_URL).rstrip('/')
+    encoded_ns = quote_plus(namespace)
+    grafana_dashboard_url = (
+        f'{grafana_base_url}/d/k8s-namespace-resources'
+        f'?orgId=1&var-namespace={encoded_ns}&refresh=15s'
+    )
+    grafana_embed_url = (
+        f'{grafana_dashboard_url}'
+        '&from=now-1h&to=now&theme=light&kiosk'
+    )
+    return render_template(
+        'resources.html',
+        namespace=namespace,
+        grafana_dashboard_url=grafana_dashboard_url,
+        grafana_embed_url=grafana_embed_url
+    )
 
 
 @app.route('/kubeconfig')
