@@ -28,6 +28,27 @@
 <div class="row mb-4">
     <div class="col-12">
         <div class="card border-0 shadow-sm">
+            <div class="card-header bg-light d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                <span><i class="bi bi-hdd-network me-2"></i>Monitoring Diagnostics</span>
+                <button class="btn btn-sm btn-outline-secondary" onclick="loadMonitoringDiagnostics()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh Status
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="row g-3" id="monitoring-diagnostics">
+                    <div class="col-md-3"><div class="metric-tile"><div class="metric-label">Portal Metrics</div><div class="metric-subtext" id="diag-portal">Checking...</div></div></div>
+                    <div class="col-md-3"><div class="metric-tile"><div class="metric-label">Prometheus</div><div class="metric-subtext" id="diag-prometheus">Checking...</div></div></div>
+                    <div class="col-md-3"><div class="metric-tile"><div class="metric-label">Grafana</div><div class="metric-subtext" id="diag-grafana">Checking...</div></div></div>
+                    <div class="col-md-3"><div class="metric-tile"><div class="metric-label">Metrics API</div><div class="metric-subtext" id="diag-metrics-api">Checking...</div></div></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card border-0 shadow-sm">
             <div class="card-header bg-dark text-white d-flex flex-wrap gap-2 justify-content-between align-items-center">
                 <span><i class="bi bi-activity me-2"></i>Live Resource Usage</span>
                 <span class="badge bg-light text-dark" id="live-updated">Waiting for metrics</span>
@@ -211,8 +232,21 @@
 <script>
 document.addEventListener('DOMContentLoaded', async () => {
     loadNamespaceResources();
+    loadMonitoringDiagnostics();
     loadLiveUsage();
     setInterval(loadLiveUsage, 5000);
+    setInterval(loadMonitoringDiagnostics, 10000);
+
+    const frame = document.getElementById('grafana-frame');
+    frame.addEventListener('load', () => {
+        const currentSrc = frame.src;
+        setTimeout(() => {
+            if (frame.contentWindow && frame.contentWindow.location && frame.contentWindow.location.href === 'about:blank') {
+                showMetricsWarning('Grafana iframe did not load correctly. Check whether Grafana is running and embedding is allowed.');
+                frame.src = currentSrc;
+            }
+        }, 1500);
+    });
 });
 
 const ns = '{{ namespace }}';
@@ -385,6 +419,47 @@ async function loadLiveUsage() {
     } catch (e) {
         showMetricsWarning('Failed to load live resource usage.');
     }
+}
+
+async function loadMonitoringDiagnostics() {
+    try {
+        const data = await apiGet(`/api/namespaces/${ns}/monitoring-diagnostics`);
+        renderDiagnostic('diag-portal', data.portal_metrics, 'Portal metrics endpoint');
+        renderDiagnostic('diag-prometheus', data.prometheus, 'Prometheus');
+        renderDiagnostic('diag-grafana', data.grafana, 'Grafana');
+        renderMetricsApiDiagnostic(data.metrics_api);
+    } catch (e) {
+        document.getElementById('diag-portal').textContent = 'Diagnostic request failed';
+        document.getElementById('diag-prometheus').textContent = 'Diagnostic request failed';
+        document.getElementById('diag-grafana').textContent = 'Diagnostic request failed';
+        document.getElementById('diag-metrics-api').textContent = 'Diagnostic request failed';
+    }
+}
+
+function renderDiagnostic(id, diagnostic, label) {
+    const el = document.getElementById(id);
+    if (!diagnostic) {
+        el.textContent = `${label}: no data`;
+        return;
+    }
+    if (diagnostic.reachable) {
+        el.innerHTML = `<span class="text-success">Reachable</span> (${diagnostic.status || 'ok'})`;
+        return;
+    }
+    el.innerHTML = `<span class="text-danger">Unavailable</span><br><small>${diagnostic.error || 'unknown error'}</small>`;
+}
+
+function renderMetricsApiDiagnostic(diagnostic) {
+    const el = document.getElementById('diag-metrics-api');
+    if (!diagnostic) {
+        el.textContent = 'Metrics API: no data';
+        return;
+    }
+    if (diagnostic.available) {
+        el.innerHTML = '<span class="text-success">Available</span>';
+        return;
+    }
+    el.innerHTML = `<span class="text-danger">Unavailable</span><br><small>${diagnostic.error || 'metrics-server missing'}</small>`;
 }
 
 function showMetricsWarning(message) {

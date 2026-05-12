@@ -2,6 +2,8 @@ import os
 import subprocess
 import shutil
 import yaml
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from kubernetes import client, config
 from config import SYSTEM_NAMESPACES, USER_NAMESPACE
@@ -361,6 +363,114 @@ class K8sClient:
         self._add_usage_percentages(result)
         return result
 
+    def get_monitoring_diagnostics(self, namespace):
+        diagnostics = {
+            'namespace': namespace,
+            'kubernetes_connected': self.is_connected(),
+            'grafana': self._check_http_endpoint('http://127.0.0.1:3000/api/health'),
+            'prometheus': self._check_http_endpoint('http://127.0.0.1:9090/-/healthy'),
+            'portal_metrics': self._check_http_endpoint('http://127.0.0.1:8080/metrics')
+        }
+
+        metrics_usage = self.get_namespace_live_usage(namespace)
+        diagnostics['metrics_api'] = {
+            'available': metrics_usage.get('metrics_available', False),
+            'error': metrics_usage.get('metrics_error')
+        }
+
+        return diagnostics
+
+    # ── Node-level USE (Utilization / Saturation / Errors) ──────────
+
+    def get_nodes_info(self):
+        """Return per-node capacity, allocatable, conditions and pod count.
+
+        Used by the Prometheus collector to expose USE-method node metrics.
+        """
+        if not self.connected:
+            return {'error': 'Not connected to Kubernetes'}
+
+        result = []
+        try:
+            nodes = self.v1.list_node()
+        except Exception as e:
+            return {'error': str(e)}
+
+        for n in nodes.items:
+            node = {
+                'name': n.metadata.name,
+                'capacity_cpu_cores': 0.0,
+                'capacity_memory_mib': 0.0,
+                'capacity_pods': 0,
+                'allocatable_cpu_cores': 0.0,
+                'allocatable_memory_mib': 0.0,
+                'allocatable_pods': 0,
+                'conditions': {},
+                'pods_on_node': 0
+            }
+
+            if n.status.capacity:
+                node['capacity_cpu_cores'] = self._parse_cpu_cores(n.status.capacity.get('cpu'))
+                node['capacity_memory_mib'] = self._parse_memory_mib(n.status.capacity.get('memory'))
+                try:
+                    node['capacity_pods'] = int(n.status.capacity.get('pods', '0'))
+                except (ValueError, TypeError):
+                    node['capacity_pods'] = 0
+
+            if n.status.allocatable:
+                node['allocatable_cpu_cores'] = self._parse_cpu_cores(n.status.allocatable.get('cpu'))
+                node['allocatable_memory_mib'] = self._parse_memory_mib(n.status.allocatable.get('memory'))
+                try:
+                    node['allocatable_pods'] = int(n.status.allocatable.get('pods', '0'))
+                except (ValueError, TypeError):
+                    node['allocatable_pods'] = 0
+
+            if n.status.conditions:
+                for c in n.status.conditions:
+                    # Ready should be True; MemoryPressure, DiskPressure, PIDPressure should be False
+                    node['conditions'][c.type] = 1 if c.status == 'True' else 0
+
+            try:
+                pods = self.v1.list_pod_for_all_namespaces(field_selector=f'spec.nodeName={node["name"]}')
+                node['pods_on_node'] = len(pods.items)
+            except Exception:
+                node['pods_on_node'] = 0
+
+            result.append(node)
+
+        return result
+
+    def get_node_metrics(self):
+        """Return live node CPU/memory usage from the Kubernetes Metrics API.
+
+        Requires metrics-server to be running in the cluster.
+        """
+        if not self.connected:
+            return {'error': 'Not connected to Kubernetes', 'metrics_available': False}
+
+        try:
+            raw = self.custom_api.list_cluster_custom_object(
+                group='metrics.k8s.io',
+                version='v1beta1',
+                plural='nodes'
+            )
+        except Exception as e:
+            return {'error': str(e), 'metrics_available': False}
+
+        nodes = []
+        for item in raw.get('items', []):
+            usage = item.get('usage') or {}
+            cpu_cores = self._parse_cpu_cores(usage.get('cpu', '0'))
+            memory_mib = self._parse_memory_mib(usage.get('memory', '0'))
+            nodes.append({
+                'name': item.get('metadata', {}).get('name', ''),
+                'cpu_cores': cpu_cores,
+                'cpu_millicores': round(cpu_cores * 1000, 3),
+                'memory_mib': round(memory_mib, 3)
+            })
+
+        return {'metrics_available': True, 'nodes': nodes}
+
     def _namespace_quota_summary(self, namespace):
         summary = {'hard': {}, 'used': {}}
         try:
@@ -392,6 +502,25 @@ class K8sClient:
             'cpu_millicores': round(cpu_limit * 1000, 3),
             'memory_mib': round(memory_limit, 3)
         }
+
+    def _check_http_endpoint(self, url):
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                return {
+                    'reachable': True,
+                    'status': response.getcode()
+                }
+        except urllib.error.HTTPError as e:
+            return {
+                'reachable': False,
+                'status': e.code,
+                'error': str(e)
+            }
+        except Exception as e:
+            return {
+                'reachable': False,
+                'error': str(e)
+            }
 
     def _demo_workload_name(self, owner):
         safe_owner = ''.join(c if c.isalnum() else '-' for c in owner.lower()).strip('-')
