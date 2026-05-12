@@ -110,7 +110,7 @@ python app.py
 ./onboard-team.sh team-alpha
 ```
 
-This generates `team-alpha-dev-kubeconfig` and `team-alpha-view-kubeconfig` in the working directory.
+This generates `team-alpha-admin-kubeconfig`, `team-alpha-dev-kubeconfig`, and `team-alpha-view-kubeconfig` in the working directory.
 
 ### Stop
 
@@ -187,7 +187,7 @@ All YAMLs in `rbac/`, `resources/`, and `networkpolicies/` are **templates** pro
 | POST | `/api/tenants` | JSON: create tenant (`{"name": "..."}`); cluster admin only |
 | DELETE | `/api/tenants/<name>` | JSON: delete tenant namespace; cluster admin only |
 | GET | `/api/namespaces/<namespace>/resources` | JSON: quota, limitrange, pods, netpols |
-| GET | `/api/namespaces/<namespace>/kubeconfig?role=dev|view` | Download kubeconfig YAML |
+| GET | `/api/namespaces/<namespace>/kubeconfig` | Download kubeconfig YAML; role query param: `admin`, `dev`, or `view` |
 
 ---
 
@@ -240,9 +240,9 @@ When modifying RBAC rules, quota limits, or network policies, run the correspond
 - Generated kubeconfig files are written with `chmod 600`.
 
 ### RBAC Hardening
-- **Developers** are explicitly denied: `secrets`, `roles`, `rolebindings`, `resourcequotas`, `limitranges`, `networkpolicies`.
-- **Viewers** are denied all write operations, `pods/exec`, `pods/portforward`, `pods/attach`, `pods/proxy`, `secrets`, `roles`, `rolebindings`.
-- Deny rules use `verbs: ["*"]` to override any accidental broad grants.
+- **Developers** can read `resourcequotas` and `limitranges` but are not granted write access to them, and are not granted: `secrets`, `roles`, `rolebindings`, `networkpolicies`.
+- **Viewers** can read `resourcequotas` and `limitranges` but are denied all write operations, `pods/exec`, `pods/portforward`, `pods/attach`, `pods/proxy`, `secrets`, `roles`, `rolebindings`.
+- Denial is implemented by omission: Kubernetes RBAC is additive and has no explicit deny rule.
 
 ### Isolation Layers
 1. **Access Control**: RBAC Roles + RoleBindings
@@ -267,7 +267,7 @@ When modifying RBAC rules, quota limits, or network policies, run the correspond
 The README explicitly lists known limitations. If you are modifying the project, be aware:
 - No persistent identity / SSO integration
 - No Kubernetes audit logging
-- No Pod Security Standards enforcement
+- Pod Security is baseline-only (not restricted enforce)
 - Single-cluster, single-node K3s (no HA)
 
 ---

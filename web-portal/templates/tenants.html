@@ -62,6 +62,44 @@
                     <input type="text" class="form-control" id="tenant-name" placeholder="e.g. team-alpha">
                     <div class="form-text">Lowercase letters, numbers, and hyphens only.</div>
                 </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Resource Quota <span class="text-muted fw-normal">(Optional)</span></label>
+                    <div class="row g-2">
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Pods</label>
+                            <input type="number" class="form-control form-control-sm quota-input" data-key="pods" placeholder="20" min="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Services</label>
+                            <input type="number" class="form-control form-control-sm quota-input" data-key="services" placeholder="10" min="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">CPU Request</label>
+                            <input type="text" class="form-control form-control-sm quota-input" data-key="requests.cpu" placeholder="2">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">CPU Limit</label>
+                            <input type="text" class="form-control form-control-sm quota-input" data-key="limits.cpu" placeholder="4">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Memory Request</label>
+                            <input type="text" class="form-control form-control-sm quota-input" data-key="requests.memory" placeholder="4Gi">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Memory Limit</label>
+                            <input type="text" class="form-control form-control-sm quota-input" data-key="limits.memory" placeholder="8Gi">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">PVCs</label>
+                            <input type="number" class="form-control form-control-sm quota-input" data-key="persistentvolumeclaims" placeholder="5" min="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small mb-1">Storage</label>
+                            <input type="text" class="form-control form-control-sm quota-input" data-key="requests.storage" placeholder="20Gi">
+                        </div>
+                    </div>
+                    <div class="form-text">Leave fields empty to use defaults.</div>
+                </div>
                 <div class="alert alert-info">
                     <i class="bi bi-info-circle me-2"></i>
                     This will create:<br>
@@ -97,6 +135,15 @@
             <div class="modal-body">
                 <p>Are you sure you want to delete namespace <strong id="delete-name"></strong>?</p>
                 <p class="text-danger"><i class="bi bi-exclamation-triangle me-2"></i>This will delete all resources in this namespace. This action cannot be undone.</p>
+                <div class="form-check mt-2">
+                    <input class="form-check-input" type="checkbox" id="force-delete">
+                    <label class="form-check-label" for="force-delete">
+                        Force delete (remove blocking finalizers)
+                    </label>
+                    <div class="form-text text-muted small">
+                        If namespace is stuck in Terminating, this will forcefully remove finalizers and complete deletion immediately.
+                    </div>
+                </div>
                 <div id="delete-error" class="alert alert-danger d-none"></div>
             </div>
             <div class="modal-footer">
@@ -138,7 +185,7 @@ async function loadTenants() {
             tbody.innerHTML = tenants.map(t => `
                 <tr>
                     <td><code class="fs-6">${t.name}</code></td>
-                    <td><span class="badge bg-success">${t.status}</span></td>
+                    <td><span class="badge ${t.status === 'Active' ? 'bg-success' : t.status === 'Terminating' ? 'bg-warning text-dark' : 'bg-secondary'}">${t.status || 'Unknown'}</span></td>
                     <td>${formatDate(t.created)}</td>
                     <td class="text-end">
                         <a href="/resources/${t.name}" class="btn btn-sm btn-outline-primary me-1">
@@ -157,6 +204,21 @@ async function loadTenants() {
         document.getElementById('loading').classList.add('d-none');
         showError('Failed to load tenants');
     }
+}
+
+function collectQuota() {
+    const quota = {};
+    document.querySelectorAll('.quota-input').forEach(input => {
+        const value = input.value.trim();
+        if (value) {
+            quota[input.dataset.key] = value;
+        }
+    });
+    return quota;
+}
+
+function clearQuotaInputs() {
+    document.querySelectorAll('.quota-input').forEach(input => { input.value = ''; });
 }
 
 async function createTenant() {
@@ -181,13 +243,15 @@ async function createTenant() {
     errorEl.classList.add('d-none');
 
     try {
-        const result = await apiPost('/api/tenants', { name });
+        const quota = collectQuota();
+        const result = await apiPost('/api/tenants', { name, quota });
         if (result.error) {
             errorEl.textContent = result.error;
             errorEl.classList.remove('d-none');
         } else {
             bootstrap.Modal.getInstance(document.getElementById('createModal')).hide();
             document.getElementById('tenant-name').value = '';
+            clearQuotaInputs();
             loadTenants();
             showToast('Tenant created successfully!', 'success');
         }
@@ -211,18 +275,20 @@ async function confirmDelete() {
     const btn = document.getElementById('btn-delete');
     const spinner = document.getElementById('delete-spinner');
     const errorEl = document.getElementById('delete-error');
+    const force = document.getElementById('force-delete').checked;
 
     btn.disabled = true;
     spinner.classList.remove('d-none');
     errorEl.classList.add('d-none');
 
     try {
-        const result = await apiDelete(`/api/tenants/${deleteTarget}`);
+        const result = await apiDelete(`/api/tenants/${deleteTarget}?force=${force}`);
         if (result.error) {
             errorEl.textContent = result.error;
             errorEl.classList.remove('d-none');
         } else {
             bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+            document.getElementById('force-delete').checked = false;
             loadTenants();
             showToast('Tenant deleted successfully!', 'success');
         }
