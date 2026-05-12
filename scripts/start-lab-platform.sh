@@ -107,6 +107,10 @@ ok "PROMETHEUS_INTERNAL_BASE_URL=${PROMETHEUS_INTERNAL_BASE_URL}"
 ok "PORTAL_METRICS_BASE_URL=${PORTAL_METRICS_BASE_URL}"
 
 log "Starting all services (web, prometheus, grafana)"
+if [ "${FULL_RESET:-false}" = "true" ]; then
+    warn "FULL_RESET=true: removing existing containers, networks, and named volumes."
+    compose down --volumes --remove-orphans
+fi
 compose up -d --build
 
 log "Waiting for portal HTTP endpoint (port ${FLASK_PORT})"

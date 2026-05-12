@@ -309,6 +309,10 @@ def _collect_metrics():
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.secret_key = SECRET_KEY
+# Force template refresh so mounted template changes are visible without
+# relying on Flask debug mode.
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
 DNS_LABEL_RE = re.compile(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
 VALID_ROLES = {'cluster-admin', 'admin', 'developer', 'viewer'}
 
@@ -395,6 +399,15 @@ def require_workload_write(view):
 @app.context_processor
 def inject_identity():
     return {'identity': current_identity()}
+
+
+@app.after_request
+def disable_html_cache(response):
+    if response.mimetype == 'text/html':
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
 
 
 @app.route('/')
