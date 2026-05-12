@@ -10,6 +10,8 @@ services:
     volumes:
       - ${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}:/host/kubeconfig:ro
       - ${HOST_KUBECTL_PATH:-/usr/local/bin/kubectl}:/host/kubectl:ro
+      - ./web-portal/templates:/app/web-portal/templates:ro
+      - ./web-portal/static:/app/web-portal/static:ro
     environment:
       - KUBECONFIG=/app/kubeconfig
       - FLASK_PORT=${FLASK_PORT:-8080}
