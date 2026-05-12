@@ -6,7 +6,7 @@ providers:
     folder: ''
     type: file
     disableDeletion: true
-    updateIntervalSeconds: 10
+    updateIntervalSeconds: 3
     allowUiUpdates: true
     options:
       path: /etc/grafana/provisioning/dashboards
