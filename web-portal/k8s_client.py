@@ -95,6 +95,7 @@ class K8sClient:
             return {'error': str(e)}
 
     def create_tenant(self, name):
+        import random
         if not shutil.which('kubectl'):
             raise RuntimeError(
                 'kubectl is not available in the portal container. '
@@ -117,7 +118,18 @@ class K8sClient:
         if result.returncode != 0:
             raise RuntimeError(f"Onboarding failed: {result.stderr}")
 
-        return result.stdout
+        password = str(random.randint(100000, 999999))
+        try:
+            ns = self.v1.read_namespace(name=name)
+            if ns.metadata.annotations:
+                ns.metadata.annotations['tenant.lab/password'] = password
+            else:
+                ns.metadata.annotations = {'tenant.lab/password': password}
+            self.v1.replace_namespace(name=name, body=ns)
+        except Exception as e:
+            raise RuntimeError(f"Namespace created but failed to set password: {e}")
+
+        return {'output': result.stdout, 'password': password}
 
     def delete_tenant(self, name, force=False):
         if not self.connected:
@@ -945,6 +957,15 @@ class K8sClient:
             return f"{hours}h"
         mins = delta.seconds // 60
         return f"{mins}m"
+
+    def get_namespace_password(self, namespace):
+        if not self.connected:
+            return None
+        try:
+            ns = self.v1.read_namespace(name=namespace)
+            return (ns.metadata.annotations or {}).get('tenant.lab/password')
+        except Exception:
+            return None
 
     def generate_kubeconfig(self, namespace, role):
         if not shutil.which('kubectl'):

@@ -254,6 +254,9 @@ async function createTenant() {
             clearQuotaInputs();
             loadTenants();
             showToast('Tenant created successfully!', 'success');
+            setTimeout(() => {
+                alert('Tenant password: ' + result.password + '\n\nPlease share this password with team members. It is required to log in to this namespace.');
+            }, 300);
         }
     } catch (e) {
         errorEl.textContent = e.message || 'Failed to create tenant';

@@ -422,6 +422,7 @@ def login():
     if request.method == 'POST':
         role = request.form.get('role', '').strip().lower()
         namespace = request.form.get('namespace', '').strip().lower()
+        password = request.form.get('password', '').strip()
 
         if role not in VALID_ROLES:
             return render_template(
@@ -450,6 +451,15 @@ def login():
                 roles=ROLE_PERMISSIONS,
                 error='Tenant admin, developer, and viewer sessions must be scoped to a tenant namespace.'
             ), 400
+
+        if role in ('admin', 'developer', 'viewer') and namespace:
+            expected = k8s.get_namespace_password(namespace)
+            if expected and password != expected:
+                return render_template(
+                    'login.html',
+                    roles=ROLE_PERMISSIONS,
+                    error='Incorrect namespace password.'
+                ), 403
 
         session['role'] = role
         session['namespace'] = namespace
@@ -550,10 +560,10 @@ def api_create_tenant():
         return jsonify({'error': 'Invalid namespace name. Use a DNS-compatible name: lowercase letters, numbers, hyphens, max 63 chars, and no leading/trailing hyphen.'}), 400
 
     try:
-        output = k8s.create_tenant(name)
+        result = k8s.create_tenant(name)
         if quota:
             k8s.apply_quota_overrides(name, quota)
-        return jsonify({'success': True, 'output': output})
+        return jsonify({'success': True, 'output': result.get('output'), 'password': result.get('password')})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
