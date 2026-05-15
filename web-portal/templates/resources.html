@@ -71,7 +71,8 @@
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">CPU Limit</label>
-                            <input class="form-control" id="limit-cpu" value="500m">
+                            <input class="form-control" id="limit-cpu" value="400m">
+                            <div class="form-text">Must stay within the namespace CPU ratio policy.</div>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label">Memory Limit</label>
@@ -116,6 +117,10 @@
                 </button>
             </div>
             <div class="card-body">
+                <div class="alert alert-secondary py-2 small">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Pod list refreshes immediately after creation. Grafana resource panels can lag about 15-30 seconds because Prometheus scrapes portal metrics every 15 seconds.
+                </div>
                 <div class="table-responsive">
                     <table class="table table-hover align-middle" id="namespace-pods-table">
                         <thead class="table-light">
@@ -294,13 +299,21 @@ function parseLines(value) {
     return value.split('\n').map(line => line.trim()).filter(Boolean);
 }
 
+function cpuToMillicores(value) {
+    const raw = value.trim();
+    if (!raw) return null;
+    if (raw.endsWith('m')) return Number(raw.slice(0, -1));
+    const cores = Number(raw);
+    return Number.isFinite(cores) ? cores * 1000 : null;
+}
+
 function resetPodForm() {
     document.getElementById('custom-pod-form').reset();
     document.getElementById('pod-image').value = 'nginx:alpine';
     document.getElementById('pod-port').value = '80';
     document.getElementById('request-cpu').value = '100m';
     document.getElementById('request-memory').value = '128Mi';
-    document.getElementById('limit-cpu').value = '500m';
+    document.getElementById('limit-cpu').value = '400m';
     document.getElementById('limit-memory').value = '512Mi';
     document.getElementById('pod-create-error').classList.add('d-none');
 }
@@ -335,6 +348,13 @@ async function createCustomPod(event) {
 
     if (!payload.name || !payload.image) {
         errorEl.textContent = 'Pod name and image are required.';
+        errorEl.classList.remove('d-none');
+        return;
+    }
+    const requestCpu = cpuToMillicores(payload.resources.requests.cpu);
+    const limitCpu = cpuToMillicores(payload.resources.limits.cpu);
+    if (requestCpu && limitCpu && limitCpu / requestCpu > 4) {
+        errorEl.textContent = 'Default namespace policy allows CPU limit/request ratio up to 4. Example: 100m request with 400m limit, or raise the request.';
         errorEl.classList.remove('d-none');
         return;
     }
