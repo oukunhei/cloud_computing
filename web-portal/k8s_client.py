@@ -4,6 +4,7 @@ import shutil
 import yaml
 import urllib.request
 import urllib.error
+import json
 from datetime import datetime, timezone
 from kubernetes import client, config
 from config import (
@@ -599,6 +600,9 @@ class K8sClient:
         if not image:
             raise ValueError('Container image is required.')
 
+        if self._pod_exists(namespace, name):
+            raise ValueError(f'Pod {name} already exists in namespace {namespace}. Choose a different name.')
+
         container_name = self._required_dns_label(spec.get('container_name') or name, 'Container name')
         labels = self._custom_pod_labels(spec.get('labels'), owner)
         env = self._custom_pod_env(spec.get('env'))
@@ -636,12 +640,12 @@ class K8sClient:
             )
         )
 
-        created = self.v1.create_namespaced_pod(namespace=namespace, body=pod)
-        return {
-            'name': created.metadata.name,
-            'namespace': namespace,
-            'status': created.status.phase if created.status else 'Pending'
-        }
+        try:
+            created = self.v1.create_namespaced_pod(namespace=namespace, body=pod)
+        except client.exceptions.ApiException as e:
+            raise RuntimeError(self._format_api_exception(e))
+
+        return self._pod_summary(created)
 
     def delete_demo_workload(self, namespace, owner):
         if not self.connected:
@@ -746,6 +750,35 @@ class K8sClient:
         if isinstance(value, str):
             return [part.strip() for part in value.splitlines() if part.strip()]
         return [str(part).strip() for part in value if str(part).strip()]
+
+    def _pod_exists(self, namespace, name):
+        try:
+            self.v1.read_namespaced_pod(name=name, namespace=namespace)
+            return True
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                return False
+            raise RuntimeError(self._format_api_exception(e))
+
+    def _pod_summary(self, pod):
+        return {
+            'name': pod.metadata.name,
+            'namespace': pod.metadata.namespace,
+            'status': pod.status.phase if pod.status else 'Pending'
+        }
+
+    def _format_api_exception(self, exc):
+        message = exc.reason or 'Kubernetes API error'
+        try:
+            body = json.loads(exc.body or '{}')
+            if body.get('message'):
+                message = body['message']
+        except (TypeError, ValueError):
+            if exc.body:
+                message = exc.body
+        if exc.status:
+            return f'Kubernetes API rejected the Pod ({exc.status}): {message}'
+        return message
 
     def permission_checks(self, namespace, portal_role):
         from config import ROLE_PERMISSIONS

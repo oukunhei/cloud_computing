@@ -221,15 +221,37 @@ async function loadNamespacePods() {
         loading.classList.add('d-none');
         if (data.error || data.pods_error) {
             showError(data.error || data.pods_error);
-            return;
+            return [];
         }
         const pods = data.pods || [];
         if (pods.length === 0) {
             empty.classList.remove('d-none');
-            return;
+            return [];
         }
         table.classList.remove('d-none');
-        tbody.innerHTML = pods.map(pod => `
+        renderNamespacePods(pods);
+        return pods;
+    } catch (e) {
+        loading.classList.add('d-none');
+        showError('Failed to load namespace Pods');
+        return [];
+    }
+}
+
+function renderNamespacePods(pods) {
+    const table = document.getElementById('namespace-pods-table');
+    const tbody = table.querySelector('tbody');
+    const empty = document.getElementById('no-pods');
+
+    if (pods.length === 0) {
+        empty.classList.remove('d-none');
+        table.classList.add('d-none');
+        return;
+    }
+
+    empty.classList.add('d-none');
+    table.classList.remove('d-none');
+    tbody.innerHTML = pods.map(pod => `
             <tr>
                 <td><code>${pod.name}</code></td>
                 <td>${statusBadge(pod.status)}</td>
@@ -240,10 +262,17 @@ async function loadNamespacePods() {
                 <td class="small">${resourceSummary(pod.limits)}</td>
             </tr>
         `).join('');
-    } catch (e) {
-        loading.classList.add('d-none');
-        showError('Failed to load namespace Pods');
+}
+
+async function waitForPodInList(podName) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        const pods = await loadNamespacePods();
+        if (pods.some(pod => pod.name === podName)) {
+            return true;
+        }
+        await new Promise(resolve => setTimeout(resolve, 750));
     }
+    return false;
 }
 
 function parseKeyValueLines(value) {
@@ -320,8 +349,12 @@ async function createCustomPod(event) {
             errorEl.textContent = result.error;
             errorEl.classList.remove('d-none');
         } else {
+            const podName = result.pod?.name || payload.name;
             showToast(result.message || 'Pod created successfully.', 'success');
-            await loadNamespacePods();
+            const found = await waitForPodInList(podName);
+            if (!found) {
+                showToast('Pod was accepted by Kubernetes, but it did not appear in the list yet. Refreshing again may show it.', 'info');
+            }
         }
     } catch (e) {
         errorEl.textContent = e.message || 'Failed to create Pod.';

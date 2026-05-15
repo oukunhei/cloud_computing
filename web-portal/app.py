@@ -633,8 +633,10 @@ def api_create_custom_pod(namespace):
         return jsonify({'success': True, 'message': f'Pod {pod["name"]} created in namespace {namespace}.', 'pod': pod})
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
-    except Exception as e:
+    except RuntimeError as e:
         return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'error': f'Unexpected error while creating Pod: {e}'}), 500
 
 
 @app.route('/api/namespaces/<namespace>/demo-workload', methods=['DELETE'])
