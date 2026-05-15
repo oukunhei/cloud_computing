@@ -570,7 +570,10 @@ class K8sClient:
                         client.V1Container(
                             name='nginx',
                             image='nginx:alpine',
-                            ports=[client.V1ContainerPort(container_port=80)]
+                            ports=[client.V1ContainerPort(container_port=80)],
+                            resources=client.V1ResourceRequirements(
+                                requests={'cpu': '100m', 'memory': '128Mi'}
+                            )
                         )
                     ])
                 )
@@ -600,6 +603,14 @@ class K8sClient:
             if e.status != 409:
                 raise
 
+        # Create HPA for the demo workload
+        if shutil.which('kubectl'):
+            subprocess.run(
+                ['kubectl', 'autoscale', 'deployment', name,
+                 '-n', namespace, '--cpu-percent=50', '--min=1', '--max=5'],
+                capture_output=True, text=True
+            )
+
         return f'Demo workload {name} Deployment and Service are present.'
 
     def delete_demo_workload(self, namespace, owner):
@@ -621,6 +632,12 @@ class K8sClient:
         except client.exceptions.ApiException as e:
             if e.status != 404:
                 raise
+
+        if shutil.which('kubectl'):
+            subprocess.run(
+                ['kubectl', 'delete', 'hpa', name, '-n', namespace],
+                capture_output=True, text=True
+            )
 
         if not deleted:
             return f'Demo workload {name} was already absent.'
