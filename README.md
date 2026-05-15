@@ -235,8 +235,8 @@ KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/oukunhei/Kubernetes_Lab_Platform.git
-cd Kubernetes_Lab_Platform
+git clone https://github.com/SHENZhouan/cloud_computing.git
+cd cloud_computing
 ```
 
 ### 2. Start the Web Portal
@@ -421,7 +421,7 @@ kubectl run test-client --image=busybox -it --rm --restart=Never --namespace tea
 | **Dashboard** | Cluster overview: nodes, namespaces, pods, tenant count |
 | **Tenant Management** | One-click create/delete tenants with full isolation stack |
 | **Resource Monitoring** | Per-namespace ResourceQuota usage bars, LimitRange rules, Pod list |
-| **Role Action Lab** | Browser buttons to create/delete a demo workload and run live RBAC permission checks |
+| **Role Action Lab** | Browser buttons to create/delete a demo workload (with auto-scaling HPA) and run live RBAC permission checks |
 | **Resource Settings** | Admin can update tenant ResourceQuota/LimitRange from the browser; developer/viewer get read-only access |
 | **Kubeconfig Generator** | Web UI to download role-appropriate admin/dev/view kubeconfig files |
 | **Permissions Viewer** | Visual matrix showing what each role can/cannot do |
@@ -506,6 +506,22 @@ kubectl apply -f demo/test-pod.yaml
 kubectl describe pod no-resources-pod | grep -A5 "Requests"
 # Should show: cpu=200m, memory=256Mi (defaults)
 ```
+
+### 5. Verify HPA Auto-Scaling
+
+Create a demo workload from the portal (or manually apply a Deployment with `resources.requests`), then watch HPA scale the pods:
+
+```bash
+export KUBECONFIG=./team-alpha-dev-kubeconfig
+
+# Check HPA status
+kubectl get hpa -n team-alpha
+
+# Watch pod count change over time
+kubectl get pods -n team-alpha -w
+```
+
+In the Grafana dashboard, open the **Pod Count Over Time** panel to see the replica count rise and fall as CPU load changes.
 
 ---
 

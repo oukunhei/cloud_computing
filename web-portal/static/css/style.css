@@ -94,3 +94,43 @@ code {
     color: #6c757d;
     cursor: not-allowed;
 }
+
+.metric-tile {
+    min-height: 10.5rem;
+    border: 1px solid #dee2e6;
+    border-radius: 0.5rem;
+    padding: 1rem;
+    background: #fff;
+}
+
+.metric-label {
+    color: #6c757d;
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.metric-value {
+    color: #212529;
+    font-size: 2.25rem;
+    font-weight: 700;
+    line-height: 1.1;
+    margin-top: 0.4rem;
+}
+
+.metric-unit {
+    color: #6c757d;
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-left: 0.35rem;
+}
+
+.metric-progress {
+    height: 0.6rem;
+    margin: 1rem 0 0.65rem;
+}
+
+.metric-subtext {
+    color: #6c757d;
+    font-size: 0.9rem;
+}

@@ -14,6 +14,10 @@ KUBECONFIG_HOST_PATH="${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}"
 HOST_KUBECTL_PATH="${HOST_KUBECTL_PATH:-/usr/local/bin/kubectl}"
 FLASK_PORT="${FLASK_PORT:-8080}"
 DEMO_TENANT="${DEMO_TENANT:-team-alpha}"
+GRAFANA_PUBLIC_BASE_URL="${GRAFANA_PUBLIC_BASE_URL:-http://127.0.0.1:3000}"
+GRAFANA_INTERNAL_BASE_URL="${GRAFANA_INTERNAL_BASE_URL:-http://127.0.0.1:3000}"
+PROMETHEUS_INTERNAL_BASE_URL="${PROMETHEUS_INTERNAL_BASE_URL:-http://127.0.0.1:9090}"
+PORTAL_METRICS_BASE_URL="${PORTAL_METRICS_BASE_URL:-http://127.0.0.1:${FLASK_PORT}}"
 
 log() {
     echo -e "${BLUE}==>${NC} $1"
@@ -50,7 +54,7 @@ else
     ok ".env already exists"
 fi
 
-for env_key in HOST_KUBECTL_PATH KUBECTL_VERSION KUBECTL_BASE_URL RUNTIME_KUBECTL_INSTALL SECRET_KEY; do
+for env_key in HOST_KUBECTL_PATH KUBECTL_VERSION KUBECTL_BASE_URL RUNTIME_KUBECTL_INSTALL SECRET_KEY GRAFANA_PUBLIC_BASE_URL GRAFANA_INTERNAL_BASE_URL PROMETHEUS_INTERNAL_BASE_URL PORTAL_METRICS_BASE_URL; do
     if ! grep -q "^${env_key}=" .env; then
         grep "^${env_key}=" .env.example >> .env
         ok "Added missing ${env_key} to .env"
@@ -96,10 +100,20 @@ ok "Kubeconfig is readable: $KUBECONFIG_HOST_PATH"
 log "Running preflight checks"
 KUBECONFIG_HOST_PATH="$KUBECONFIG_HOST_PATH" HOST_KUBECTL_PATH="$HOST_KUBECTL_PATH" FLASK_PORT="$FLASK_PORT" ./scripts/check-prereqs.sh
 
-log "Starting web portal"
+log "Using monitoring endpoints"
+ok "GRAFANA_PUBLIC_BASE_URL=${GRAFANA_PUBLIC_BASE_URL}"
+ok "GRAFANA_INTERNAL_BASE_URL=${GRAFANA_INTERNAL_BASE_URL}"
+ok "PROMETHEUS_INTERNAL_BASE_URL=${PROMETHEUS_INTERNAL_BASE_URL}"
+ok "PORTAL_METRICS_BASE_URL=${PORTAL_METRICS_BASE_URL}"
+
+log "Starting all services (web, prometheus, grafana)"
+if [ "${FULL_RESET:-false}" = "true" ]; then
+    warn "FULL_RESET=true: removing existing containers, networks, and named volumes."
+    compose down --volumes --remove-orphans
+fi
 compose up -d --build
 
-log "Waiting for portal HTTP endpoint"
+log "Waiting for portal HTTP endpoint (port ${FLASK_PORT})"
 for i in {1..60}; do
     if curl -fsS "http://127.0.0.1:${FLASK_PORT}/login" >/dev/null 2>&1; then
         ok "Portal is reachable at http://127.0.0.1:${FLASK_PORT}"
@@ -109,6 +123,26 @@ for i in {1..60}; do
         compose logs --tail=80 web || true
         fail "Portal did not become reachable on port $FLASK_PORT."
     fi
+    sleep 2
+done
+
+log "Waiting for Prometheus (port 9090)"
+for i in {1..30}; do
+    if curl -fsS "http://127.0.0.1:9090/-/healthy" >/dev/null 2>&1; then
+        ok "Prometheus is ready at http://127.0.0.1:9090"
+        break
+    fi
+    [ "$i" -eq 30 ] && warn "Prometheus did not become reachable (non-fatal)"
+    sleep 2
+done
+
+log "Waiting for Grafana (port 3000)"
+for i in {1..30}; do
+    if curl -fsS "http://127.0.0.1:3000/api/health" >/dev/null 2>&1; then
+        ok "Grafana is ready at http://127.0.0.1:3000"
+        break
+    fi
+    [ "$i" -eq 30 ] && warn "Grafana did not become reachable (non-fatal)"
     sleep 2
 done
 
@@ -131,7 +165,9 @@ cat <<EOF
 ${GREEN}Lab platform is running.${NC}
 
 Open:
-  http://127.0.0.1:${FLASK_PORT}/login
+  Portal:   http://127.0.0.1:${FLASK_PORT}/login
+  Grafana:  http://127.0.0.1:3000  (admin / admin)
+  Prometheus: http://127.0.0.1:9090
 
 Useful commands:
   docker compose logs -f web

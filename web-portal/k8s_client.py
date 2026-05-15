@@ -2,9 +2,17 @@ import os
 import subprocess
 import shutil
 import yaml
+import urllib.request
+import urllib.error
 from datetime import datetime, timezone
 from kubernetes import client, config
-from config import SYSTEM_NAMESPACES, USER_NAMESPACE
+from config import (
+    SYSTEM_NAMESPACES,
+    USER_NAMESPACE,
+    GRAFANA_INTERNAL_BASE_URL,
+    PROMETHEUS_INTERNAL_BASE_URL,
+    PORTAL_METRICS_BASE_URL
+)
 
 
 class K8sClient:
@@ -15,6 +23,7 @@ class K8sClient:
         self.rbac_v1 = None
         self.apps_v1 = None
         self.net_v1 = None
+        self.custom_api = None
         self._init_client()
 
     def _init_client(self):
@@ -28,6 +37,7 @@ class K8sClient:
             self.rbac_v1 = client.RbacAuthorizationV1Api()
             self.apps_v1 = client.AppsV1Api()
             self.net_v1 = client.NetworkingV1Api()
+            self.custom_api = client.CustomObjectsApi()
             self.connected = True
         except Exception:
             self.connected = False
@@ -85,6 +95,7 @@ class K8sClient:
             return {'error': str(e)}
 
     def create_tenant(self, name):
+        import random
         if not shutil.which('kubectl'):
             raise RuntimeError(
                 'kubectl is not available in the portal container. '
@@ -107,7 +118,18 @@ class K8sClient:
         if result.returncode != 0:
             raise RuntimeError(f"Onboarding failed: {result.stderr}")
 
-        return result.stdout
+        password = str(random.randint(100000, 999999))
+        try:
+            ns = self.v1.read_namespace(name=name)
+            if ns.metadata.annotations:
+                ns.metadata.annotations['tenant.lab/password'] = password
+            else:
+                ns.metadata.annotations = {'tenant.lab/password': password}
+            self.v1.replace_namespace(name=name, body=ns)
+        except Exception as e:
+            raise RuntimeError(f"Namespace created but failed to set password: {e}")
+
+        return {'output': result.stdout, 'password': password}
 
     def delete_tenant(self, name, force=False):
         if not self.connected:
@@ -293,6 +315,231 @@ class K8sClient:
 
         return result
 
+    def get_namespace_live_usage(self, namespace):
+        if not self.connected:
+            return {'error': 'Not connected to Kubernetes'}
+
+        result = {
+            'namespace': namespace,
+            'metrics_available': False,
+            'pods': [],
+            'totals': {
+                'cpu_cores': 0,
+                'cpu_millicores': 0,
+                'memory_mib': 0
+            },
+            'quota': self._namespace_quota_summary(namespace)
+        }
+
+        try:
+            pod_metrics = self.custom_api.list_namespaced_custom_object(
+                group='metrics.k8s.io',
+                version='v1beta1',
+                namespace=namespace,
+                plural='pods'
+            )
+        except Exception as e:
+            result['metrics_error'] = (
+                'Kubernetes Metrics API is not available. Install metrics-server '
+                f'or wait for it to publish pod metrics. Detail: {e}'
+            )
+            return result
+
+        result['metrics_available'] = True
+        for item in pod_metrics.get('items', []):
+            pod_cpu = 0
+            pod_memory = 0
+            containers = []
+            for c in item.get('containers', []):
+                usage = c.get('usage') or {}
+                cpu_cores = self._parse_cpu_cores(usage.get('cpu'))
+                memory_mib = self._parse_memory_mib(usage.get('memory'))
+                pod_cpu += cpu_cores
+                pod_memory += memory_mib
+                containers.append({
+                    'name': c.get('name', ''),
+                    'cpu_cores': cpu_cores,
+                    'cpu_millicores': round(cpu_cores * 1000, 3),
+                    'memory_mib': round(memory_mib, 3)
+                })
+
+            result['pods'].append({
+                'name': item.get('metadata', {}).get('name', ''),
+                'timestamp': item.get('timestamp', ''),
+                'cpu_cores': pod_cpu,
+                'cpu_millicores': round(pod_cpu * 1000, 3),
+                'memory_mib': round(pod_memory, 3),
+                'containers': containers
+            })
+            result['totals']['cpu_cores'] += pod_cpu
+            result['totals']['memory_mib'] += pod_memory
+
+        result['pods'] = sorted(result['pods'], key=lambda p: p['name'])
+        result['totals']['cpu_cores'] = round(result['totals']['cpu_cores'], 6)
+        result['totals']['cpu_millicores'] = round(result['totals']['cpu_cores'] * 1000, 3)
+        result['totals']['memory_mib'] = round(result['totals']['memory_mib'], 3)
+        self._add_usage_percentages(result)
+        return result
+
+    def get_monitoring_diagnostics(self, namespace):
+        diagnostics = {
+            'namespace': namespace,
+            'kubernetes_connected': self.is_connected(),
+            'grafana': self._check_http_endpoint(f'{GRAFANA_INTERNAL_BASE_URL}/api/health'),
+            'prometheus': self._check_http_endpoint(f'{PROMETHEUS_INTERNAL_BASE_URL}/-/healthy'),
+            'portal_metrics': self._check_http_endpoint(f'{PORTAL_METRICS_BASE_URL}/metrics')
+        }
+
+        metrics_usage = self.get_namespace_live_usage(namespace)
+        diagnostics['metrics_api'] = {
+            'available': metrics_usage.get('metrics_available', False),
+            'error': metrics_usage.get('metrics_error')
+        }
+
+        return diagnostics
+
+    # ── Node-level USE (Utilization / Saturation / Errors) ──────────
+
+    def get_nodes_info(self):
+        """Return per-node capacity, allocatable, conditions and pod count.
+
+        Used by the Prometheus collector to expose USE-method node metrics.
+        """
+        if not self.connected:
+            return {'error': 'Not connected to Kubernetes'}
+
+        result = []
+        try:
+            nodes = self.v1.list_node()
+        except Exception as e:
+            return {'error': str(e)}
+
+        for n in nodes.items:
+            node = {
+                'name': n.metadata.name,
+                'capacity_cpu_cores': 0.0,
+                'capacity_memory_mib': 0.0,
+                'capacity_pods': 0,
+                'allocatable_cpu_cores': 0.0,
+                'allocatable_memory_mib': 0.0,
+                'allocatable_pods': 0,
+                'conditions': {},
+                'pods_on_node': 0
+            }
+
+            if n.status.capacity:
+                node['capacity_cpu_cores'] = self._parse_cpu_cores(n.status.capacity.get('cpu'))
+                node['capacity_memory_mib'] = self._parse_memory_mib(n.status.capacity.get('memory'))
+                try:
+                    node['capacity_pods'] = int(n.status.capacity.get('pods', '0'))
+                except (ValueError, TypeError):
+                    node['capacity_pods'] = 0
+
+            if n.status.allocatable:
+                node['allocatable_cpu_cores'] = self._parse_cpu_cores(n.status.allocatable.get('cpu'))
+                node['allocatable_memory_mib'] = self._parse_memory_mib(n.status.allocatable.get('memory'))
+                try:
+                    node['allocatable_pods'] = int(n.status.allocatable.get('pods', '0'))
+                except (ValueError, TypeError):
+                    node['allocatable_pods'] = 0
+
+            if n.status.conditions:
+                for c in n.status.conditions:
+                    # Ready should be True; MemoryPressure, DiskPressure, PIDPressure should be False
+                    node['conditions'][c.type] = 1 if c.status == 'True' else 0
+
+            try:
+                pods = self.v1.list_pod_for_all_namespaces(field_selector=f'spec.nodeName={node["name"]}')
+                node['pods_on_node'] = len(pods.items)
+            except Exception:
+                node['pods_on_node'] = 0
+
+            result.append(node)
+
+        return result
+
+    def get_node_metrics(self):
+        """Return live node CPU/memory usage from the Kubernetes Metrics API.
+
+        Requires metrics-server to be running in the cluster.
+        """
+        if not self.connected:
+            return {'error': 'Not connected to Kubernetes', 'metrics_available': False}
+
+        try:
+            raw = self.custom_api.list_cluster_custom_object(
+                group='metrics.k8s.io',
+                version='v1beta1',
+                plural='nodes'
+            )
+        except Exception as e:
+            return {'error': str(e), 'metrics_available': False}
+
+        nodes = []
+        for item in raw.get('items', []):
+            usage = item.get('usage') or {}
+            cpu_cores = self._parse_cpu_cores(usage.get('cpu', '0'))
+            memory_mib = self._parse_memory_mib(usage.get('memory', '0'))
+            nodes.append({
+                'name': item.get('metadata', {}).get('name', ''),
+                'cpu_cores': cpu_cores,
+                'cpu_millicores': round(cpu_cores * 1000, 3),
+                'memory_mib': round(memory_mib, 3)
+            })
+
+        return {'metrics_available': True, 'nodes': nodes}
+
+    def _namespace_quota_summary(self, namespace):
+        summary = {'hard': {}, 'used': {}}
+        try:
+            quotas = self.v1.list_namespaced_resource_quota(namespace)
+            for q in quotas.items:
+                hard = q.spec.hard or {}
+                used = (q.status.used if q.status else {}) or {}
+                summary['hard'].update(dict(hard))
+                summary['used'].update(dict(used))
+        except Exception:
+            pass
+        return summary
+
+    def _add_usage_percentages(self, usage):
+        hard = usage.get('quota', {}).get('hard', {})
+        cpu_limit = self._parse_cpu_cores(hard.get('limits.cpu') or hard.get('requests.cpu'))
+        memory_limit = self._parse_memory_mib(hard.get('limits.memory') or hard.get('requests.memory'))
+
+        usage['totals']['cpu_percent'] = (
+            round(usage['totals']['cpu_cores'] / cpu_limit * 100, 2)
+            if cpu_limit > 0 else None
+        )
+        usage['totals']['memory_percent'] = (
+            round(usage['totals']['memory_mib'] / memory_limit * 100, 2)
+            if memory_limit > 0 else None
+        )
+        usage['limits'] = {
+            'cpu_cores': cpu_limit,
+            'cpu_millicores': round(cpu_limit * 1000, 3),
+            'memory_mib': round(memory_limit, 3)
+        }
+
+    def _check_http_endpoint(self, url):
+        try:
+            with urllib.request.urlopen(url, timeout=2) as response:
+                return {
+                    'reachable': True,
+                    'status': response.getcode()
+                }
+        except urllib.error.HTTPError as e:
+            return {
+                'reachable': False,
+                'status': e.code,
+                'error': str(e)
+            }
+        except Exception as e:
+            return {
+                'reachable': False,
+                'error': str(e)
+            }
+
     def _demo_workload_name(self, owner):
         safe_owner = ''.join(c if c.isalnum() else '-' for c in owner.lower()).strip('-')
         if not safe_owner:
@@ -323,7 +570,10 @@ class K8sClient:
                         client.V1Container(
                             name='nginx',
                             image='nginx:alpine',
-                            ports=[client.V1ContainerPort(container_port=80)]
+                            ports=[client.V1ContainerPort(container_port=80)],
+                            resources=client.V1ResourceRequirements(
+                                requests={'cpu': '100m', 'memory': '128Mi'}
+                            )
                         )
                     ])
                 )
@@ -353,6 +603,14 @@ class K8sClient:
             if e.status != 409:
                 raise
 
+        # Create HPA for the demo workload
+        if shutil.which('kubectl'):
+            subprocess.run(
+                ['kubectl', 'autoscale', 'deployment', name,
+                 '-n', namespace, '--cpu-percent=50', '--min=1', '--max=5'],
+                capture_output=True, text=True
+            )
+
         return f'Demo workload {name} Deployment and Service are present.'
 
     def delete_demo_workload(self, namespace, owner):
@@ -374,6 +632,12 @@ class K8sClient:
         except client.exceptions.ApiException as e:
             if e.status != 404:
                 raise
+
+        if shutil.which('kubectl'):
+            subprocess.run(
+                ['kubectl', 'delete', 'hpa', name, '-n', namespace],
+                capture_output=True, text=True
+            )
 
         if not deleted:
             return f'Demo workload {name} was already absent.'
@@ -402,6 +666,10 @@ class K8sClient:
         def is_allowed(resource, verb='read'):
             """Check if the role is allowed based on ROLE_PERMISSIONS config."""
             if portal_role in ('cluster-admin', 'admin'):
+                # cluster-admin can do everything including delete
+                # admin (tenant admin) cannot delete namespaces
+                if verb == 'delete':
+                    return portal_role == 'cluster-admin'
                 return True
             if verb in ('read', 'list', 'get'):
                 return resource in can_read
@@ -423,7 +691,7 @@ class K8sClient:
             {'label': 'Modify NetworkPolicy',         'allowed': portal_role in ('cluster-admin', 'admin')},
             {'label': 'Modify RBAC roles',            'allowed': portal_role in ('cluster-admin', 'admin')},
             {'label': 'Exec into pods',               'allowed': portal_role in ('cluster-admin', 'admin') or can_exec},
-            {'label': 'Delete namespaces',            'allowed': False},
+            {'label': 'Delete namespaces',            'allowed': is_allowed('namespaces', 'delete')},
         ]
 
         results = []
@@ -646,6 +914,54 @@ class K8sClient:
         except ValueError:
             return 0
 
+    def _parse_cpu_cores(self, value):
+        if not value:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        val = str(value).strip()
+        suffixes = {
+            'n': 1_000_000_000,
+            'u': 1_000_000,
+            'm': 1_000
+        }
+        for suffix, divisor in suffixes.items():
+            if val.endswith(suffix):
+                try:
+                    return float(val[:-len(suffix)]) / divisor
+                except ValueError:
+                    return 0.0
+        try:
+            return float(val)
+        except ValueError:
+            return 0.0
+
+    def _parse_memory_mib(self, value):
+        if not value:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value) / (1024 * 1024)
+        val = str(value).strip()
+        suffixes = {
+            'Ki': 1 / 1024,
+            'Mi': 1,
+            'Gi': 1024,
+            'Ti': 1024 * 1024,
+            'K': 1000 / (1024 * 1024),
+            'M': 1000 * 1000 / (1024 * 1024),
+            'G': 1000 * 1000 * 1000 / (1024 * 1024)
+        }
+        for suffix, multiplier in suffixes.items():
+            if val.endswith(suffix):
+                try:
+                    return float(val[:-len(suffix)]) * multiplier
+                except ValueError:
+                    return 0.0
+        try:
+            return float(val) / (1024 * 1024)
+        except ValueError:
+            return 0.0
+
     def _format_age(self, dt):
         if not dt:
             return ''
@@ -658,6 +974,15 @@ class K8sClient:
             return f"{hours}h"
         mins = delta.seconds // 60
         return f"{mins}m"
+
+    def get_namespace_password(self, namespace):
+        if not self.connected:
+            return None
+        try:
+            ns = self.v1.read_namespace(name=namespace)
+            return (ns.metadata.annotations or {}).get('tenant.lab/password')
+        except Exception:
+            return None
 
     def generate_kubeconfig(self, namespace, role):
         if not shutil.which('kubectl'):

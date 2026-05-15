@@ -10,12 +10,56 @@ services:
     volumes:
       - ${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}:/host/kubeconfig:ro
       - ${HOST_KUBECTL_PATH:-/usr/local/bin/kubectl}:/host/kubectl:ro
+      - ./web-portal/templates:/app/web-portal/templates:ro
+      - ./web-portal/static:/app/web-portal/static:ro
     environment:
       - KUBECONFIG=/app/kubeconfig
       - FLASK_PORT=${FLASK_PORT:-8080}
       - USER_NAMESPACE=${USER_NAMESPACE:-lab-platform-users}
       - SECRET_KEY=${SECRET_KEY:-dev-only-change-me}
+      - GRAFANA_PUBLIC_BASE_URL=${GRAFANA_PUBLIC_BASE_URL:-http://127.0.0.1:3000}
+      - GRAFANA_INTERNAL_BASE_URL=${GRAFANA_INTERNAL_BASE_URL:-http://127.0.0.1:3000}
+      - PROMETHEUS_INTERNAL_BASE_URL=${PROMETHEUS_INTERNAL_BASE_URL:-http://127.0.0.1:9090}
+      - PORTAL_METRICS_BASE_URL=${PORTAL_METRICS_BASE_URL:-http://127.0.0.1:8080}
       - KUBECTL_VERSION=${KUBECTL_VERSION:-v1.30.6}
       - KUBECTL_BASE_URL=${KUBECTL_BASE_URL:-https://dl.k8s.io/release}
       - RUNTIME_KUBECTL_INSTALL=${RUNTIME_KUBECTL_INSTALL:-auto}
     restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    network_mode: host
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=7d'
+      - '--web.listen-address=0.0.0.0:9090'
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:10.4.0
+    network_mode: host
+    volumes:
+      - ./monitoring/grafana/datasources/datasource.yml:/etc/grafana/provisioning/datasources/datasource.yml:ro
+      - ./monitoring/grafana/dashboards/dashboard-provider.yml:/etc/grafana/provisioning/dashboards/dashboard-provider.yml:ro
+      - ./monitoring/grafana/dashboards/namespace-resources.json:/etc/grafana/provisioning/dashboards/namespace-resources.json:ro
+      - grafana_data:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_NAME=Main Org.
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_HTTP_PORT=3000
+      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_SECURITY_ALLOW_EMBEDDING=true
+      - GF_PANELS_DISABLE_SANITIZE_HTML=true
+    restart: unless-stopped
+
+volumes:
+  prometheus_data:
+  grafana_data:

@@ -189,7 +189,7 @@ async function loadTenants() {
                     <td>${formatDate(t.created)}</td>
                     <td class="text-end">
                         <a href="/resources/${t.name}" class="btn btn-sm btn-outline-primary me-1">
-                            <i class="bi bi-graph-up"></i> Resources
+                            <i class="bi bi-activity"></i> Live Usage
                         </a>
                         ${IS_PLATFORM_ADMIN ? `
                         <button class="btn btn-sm btn-outline-danger" onclick="promptDelete('${t.name}')">
@@ -254,6 +254,9 @@ async function createTenant() {
             clearQuotaInputs();
             loadTenants();
             showToast('Tenant created successfully!', 'success');
+            setTimeout(() => {
+                alert('Tenant password: ' + result.password + '\n\nPlease share this password with team members. It is required to log in to this namespace.');
+            }, 300);
         }
     } catch (e) {
         errorEl.textContent = e.message || 'Failed to create tenant';

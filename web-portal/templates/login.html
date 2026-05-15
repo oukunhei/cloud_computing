@@ -29,15 +29,41 @@
                                         <option value="viewer">Viewer - read-only inspection</option>
                                     </select>
                                 </div>
-                                <div class="mb-4">
+                                <div class="mb-3">
                                     <label class="form-label">Tenant Namespace</label>
-                                    <input class="form-control form-control-lg" name="namespace" placeholder="e.g. team-alpha">
+                                    <input class="form-control form-control-lg" name="namespace" id="login-namespace" placeholder="e.g. team-alpha">
                                     <div class="form-text">Leave empty only for cluster admin. Set a namespace for tenant admin, developer, or viewer.</div>
+                                </div>
+                                <div class="mb-4" id="password-group">
+                                    <label class="form-label">Namespace Password</label>
+                                    <input type="password" class="form-control form-control-lg" name="password" id="login-password" placeholder="6-digit password">
+                                    <div class="form-text">Required for tenant namespaces. Cluster admin does not need a password.</div>
                                 </div>
                                 <button class="btn btn-dark btn-lg w-100" type="submit">
                                     <i class="bi bi-box-arrow-in-right me-2"></i>Enter Portal
                                 </button>
                             </form>
+                            <script>
+                            (function() {
+                                const roleSelect = document.getElementById('role-select-login');
+                                const nsInput = document.getElementById('login-namespace');
+                                const pwGroup = document.getElementById('password-group');
+                                const pwInput = document.getElementById('login-password');
+                                function update() {
+                                    if (roleSelect.value === 'cluster-admin') {
+                                        nsInput.value = '';
+                                        nsInput.closest('.mb-3').classList.add('d-none');
+                                        pwGroup.classList.add('d-none');
+                                        pwInput.value = '';
+                                    } else {
+                                        nsInput.closest('.mb-3').classList.remove('d-none');
+                                        pwGroup.classList.remove('d-none');
+                                    }
+                                }
+                                roleSelect.addEventListener('change', update);
+                                update();
+                            })();
+                            </script>
                         </div>
                     </div>
                 </div>

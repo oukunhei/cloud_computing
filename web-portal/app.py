@@ -1,12 +1,318 @@
 import os
 import re
+import threading
+import time
+from urllib.parse import quote_plus
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, Response, redirect, session, url_for
+from prometheus_client import Gauge, generate_latest, CollectorRegistry, CONTENT_TYPE_LATEST
 from k8s_client import k8s
-from config import ROLE_PERMISSIONS, FLASK_PORT, SECRET_KEY
+from config import (
+    ROLE_PERMISSIONS,
+    FLASK_PORT,
+    SECRET_KEY,
+    SYSTEM_NAMESPACES,
+    USER_NAMESPACE,
+    GRAFANA_PUBLIC_BASE_URL,
+    GRAFANA_INTERNAL_BASE_URL
+)
+
+# ── Prometheus metrics ──────────────────────────────────────────────
+prom_registry = CollectorRegistry()
+
+METRIC_QUOTA_HARD = Gauge(
+    'k8s_namespace_resource_quota_hard',
+    'ResourceQuota hard limit per namespace',
+    ['namespace', 'resource'],
+    registry=prom_registry
+)
+METRIC_QUOTA_USED = Gauge(
+    'k8s_namespace_resource_quota_used',
+    'ResourceQuota current usage per namespace',
+    ['namespace', 'resource'],
+    registry=prom_registry
+)
+METRIC_QUOTA_PERCENT = Gauge(
+    'k8s_namespace_resource_quota_percent',
+    'ResourceQuota usage percentage (0-100) per namespace',
+    ['namespace', 'resource'],
+    registry=prom_registry
+)
+METRIC_POD_COUNT = Gauge(
+    'k8s_namespace_pod_count',
+    'Number of pods in the namespace',
+    ['namespace'],
+    registry=prom_registry
+)
+METRIC_POD_STATUS = Gauge(
+    'k8s_namespace_pod_status',
+    'Pod status (1=RUNNING, 2=PENDING, 3=FAILED, 0=UNKNOWN)',
+    ['namespace', 'pod'],
+    registry=prom_registry
+)
+METRIC_NETPOL_COUNT = Gauge(
+    'k8s_namespace_networkpolicy_count',
+    'Number of NetworkPolicies in the namespace',
+    ['namespace'],
+    registry=prom_registry
+)
+METRIC_NS_CPU_MILLICORES = Gauge(
+    'k8s_namespace_cpu_usage_millicores',
+    'Live CPU usage in millicores from the Kubernetes Metrics API',
+    ['namespace'],
+    registry=prom_registry
+)
+METRIC_NS_MEMORY_MIB = Gauge(
+    'k8s_namespace_memory_usage_mib',
+    'Live memory usage in MiB from the Kubernetes Metrics API',
+    ['namespace'],
+    registry=prom_registry
+)
+METRIC_POD_CPU_MILLICORES = Gauge(
+    'k8s_pod_cpu_usage_millicores',
+    'Live pod CPU usage in millicores from the Kubernetes Metrics API',
+    ['namespace', 'pod'],
+    registry=prom_registry
+)
+METRIC_POD_MEMORY_MIB = Gauge(
+    'k8s_pod_memory_usage_mib',
+    'Live pod memory usage in MiB from the Kubernetes Metrics API',
+    ['namespace', 'pod'],
+    registry=prom_registry
+)
+
+# ── Node-level USE metrics ──────────────────────────────────────────
+
+METRIC_NODE_CONDITION = Gauge(
+    'k8s_node_condition',
+    'Node condition status (1=OK, 0=NotOK)',
+    ['node', 'condition'],
+    registry=prom_registry
+)
+METRIC_NODE_POD_COUNT = Gauge(
+    'k8s_node_pod_count',
+    'Number of pods scheduled on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_POD_CAPACITY = Gauge(
+    'k8s_node_pod_capacity',
+    'Maximum pods allocatable on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_CPU_ALLOCATABLE = Gauge(
+    'k8s_node_cpu_allocatable_cores',
+    'Allocatable CPU cores on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_MEM_ALLOCATABLE = Gauge(
+    'k8s_node_memory_allocatable_mib',
+    'Allocatable memory in MiB on the node',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_CPU_MILLICORES = Gauge(
+    'k8s_node_cpu_usage_millicores',
+    'Live node CPU usage in millicores from the Kubernetes Metrics API',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_MEMORY_MIB = Gauge(
+    'k8s_node_memory_usage_mib',
+    'Live node memory usage in MiB from the Kubernetes Metrics API',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_CPU_UTIL_PCT = Gauge(
+    'k8s_node_cpu_utilization_percent',
+    'Node CPU utilization percentage (usage / allocatable * 100)',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_MEM_UTIL_PCT = Gauge(
+    'k8s_node_memory_utilization_percent',
+    'Node memory utilization percentage (usage / allocatable * 100)',
+    ['node'],
+    registry=prom_registry
+)
+METRIC_NODE_POD_UTIL_PCT = Gauge(
+    'k8s_node_pod_utilization_percent',
+    'Node pod slot utilization percentage (pods / max_pods * 100)',
+    ['node'],
+    registry=prom_registry
+)
+
+_metrics_lock = threading.Lock()
+_metrics_cache_ttl = 15  # seconds
+_metrics_cached_data = None
+_metrics_cached_at = 0
+
+METRIC_UP = Gauge(
+    'k8s_portal_up',
+    'Whether the K8s portal metrics collector is connected (1=connected, 0=disconnected)',
+    registry=prom_registry
+)
+
+
+def _resource_to_number(val):
+    """Convert a Kubernetes resource string (e.g. '100m', '2Gi', '10') to a float."""
+    if not val:
+        return 0.0
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if s.endswith('m'):
+        return float(s[:-1]) / 1000.0
+    if s.endswith('Gi'):
+        return float(s[:-2]) * 1024.0
+    if s.endswith('Mi'):
+        return float(s[:-2])
+    if s.endswith('Ki'):
+        return float(s[:-2]) / 1024.0
+    if s.endswith('Ti'):
+        return float(s[:-2]) * 1024.0 * 1024.0
+    try:
+        return float(s)
+    except ValueError:
+        return 0.0
+
+
+def _collect_metrics():
+    """Query Kubernetes API and refresh all Prometheus metrics."""
+    global _metrics_cached_at
+
+    # Always check connection status and set up metric
+    connected = k8s.is_connected()
+    METRIC_UP.set(1 if connected else 0)
+
+    if not connected:
+        return
+
+    # Check cache: skip K8s API queries if data is fresh
+    with _metrics_lock:
+        if time.time() - _metrics_cached_at < _metrics_cache_ttl:
+            return
+
+    try:
+        ns_list = k8s.v1.list_namespace()
+    except Exception:
+        return
+
+    for ns in ns_list.items:
+        namespace = ns.metadata.name
+
+        # --- Pods ---
+        try:
+            pods = k8s.v1.list_namespaced_pod(namespace)
+            METRIC_POD_COUNT.labels(namespace=namespace).set(len(pods.items))
+            for p in pods.items:
+                phase = p.status.phase or 'Unknown'
+                status_map = {'Running': 1, 'Pending': 2, 'Failed': 3, 'Succeeded': 1}
+                METRIC_POD_STATUS.labels(namespace=namespace, pod=p.metadata.name).set(
+                    status_map.get(phase, 0)
+                )
+        except Exception:
+            METRIC_POD_COUNT.labels(namespace=namespace).set(0)
+
+        # --- ResourceQuota ---
+        try:
+            quotas = k8s.v1.list_namespaced_resource_quota(namespace)
+            for q in quotas.items:
+                hard = q.spec.hard or {}
+                used = (q.status.used if q.status else {}) or {}
+                for resource_key, hard_val in hard.items():
+                    hard_num = _resource_to_number(hard_val)
+                    used_num = _resource_to_number(used.get(resource_key, '0'))
+                    pct = (used_num / hard_num * 100.0) if hard_num > 0 else 0.0
+                    METRIC_QUOTA_HARD.labels(namespace=namespace, resource=resource_key).set(hard_num)
+                    METRIC_QUOTA_USED.labels(namespace=namespace, resource=resource_key).set(used_num)
+                    METRIC_QUOTA_PERCENT.labels(namespace=namespace, resource=resource_key).set(pct)
+        except Exception:
+            pass
+
+        # --- NetworkPolicies ---
+        try:
+            np_list = k8s.net_v1.list_namespaced_network_policy(namespace)
+            METRIC_NETPOL_COUNT.labels(namespace=namespace).set(len(np_list.items))
+        except Exception:
+            METRIC_NETPOL_COUNT.labels(namespace=namespace).set(0)
+
+        # --- Live pod usage from metrics-server ---
+        usage = k8s.get_namespace_live_usage(namespace)
+        if usage.get('metrics_available'):
+            totals = usage.get('totals') or {}
+            METRIC_NS_CPU_MILLICORES.labels(namespace=namespace).set(totals.get('cpu_millicores', 0))
+            METRIC_NS_MEMORY_MIB.labels(namespace=namespace).set(totals.get('memory_mib', 0))
+            for pod in usage.get('pods', []):
+                METRIC_POD_CPU_MILLICORES.labels(namespace=namespace, pod=pod['name']).set(
+                    pod.get('cpu_millicores', 0)
+                )
+                METRIC_POD_MEMORY_MIB.labels(namespace=namespace, pod=pod['name']).set(
+                    pod.get('memory_mib', 0)
+                )
+
+    # ── Node-level USE collection ────────────────────────────────────
+    # Build a lookup of node -> allocatable from nodes_info so we can
+    # compute utilization percentages in one pass.
+    node_allocatable = {}  # node_name -> {cpu_cores, memory_mib, pods}
+
+    try:
+        nodes_info = k8s.get_nodes_info()
+        if not isinstance(nodes_info, dict) or 'error' not in nodes_info:
+            for node in nodes_info:
+                node_name = node['name']
+                node_allocatable[node_name] = {
+                    'cpu_cores': node.get('allocatable_cpu_cores', 0),
+                    'memory_mib': node.get('allocatable_memory_mib', 0),
+                    'pods': node.get('allocatable_pods', 0)
+                }
+                # Conditions (Errors / Health)
+                for cond_name, cond_val in node.get('conditions', {}).items():
+                    METRIC_NODE_CONDITION.labels(node=node_name, condition=cond_name).set(cond_val)
+                # Pod count / capacity (Saturation)
+                METRIC_NODE_POD_COUNT.labels(node=node_name).set(node.get('pods_on_node', 0))
+                METRIC_NODE_POD_CAPACITY.labels(node=node_name).set(node.get('allocatable_pods', 0))
+                pod_pct = (node.get('pods_on_node', 0) / max(node.get('allocatable_pods', 1), 1) * 100.0) if node.get('allocatable_pods', 0) > 0 else 0.0
+                METRIC_NODE_POD_UTIL_PCT.labels(node=node_name).set(pod_pct)
+                # Allocatable capacity (Utilization baseline)
+                METRIC_NODE_CPU_ALLOCATABLE.labels(node=node_name).set(node.get('allocatable_cpu_cores', 0))
+                METRIC_NODE_MEM_ALLOCATABLE.labels(node=node_name).set(node.get('allocatable_memory_mib', 0))
+    except Exception:
+        pass
+
+    # Node live usage from metrics-server (Utilization)
+    try:
+        node_metrics = k8s.get_node_metrics()
+        if node_metrics.get('metrics_available'):
+            for nm in node_metrics.get('nodes', []):
+                node_name = nm['name']
+                cpu_millicores = nm.get('cpu_millicores', 0)
+                memory_mib = nm.get('memory_mib', 0)
+                METRIC_NODE_CPU_MILLICORES.labels(node=node_name).set(cpu_millicores)
+                METRIC_NODE_MEMORY_MIB.labels(node=node_name).set(memory_mib)
+                # Compute utilization % using the allocatable values we already fetched
+                alloc = node_allocatable.get(node_name, {})
+                alloc_cpu = alloc.get('cpu_cores', 0)
+                alloc_mem = alloc.get('memory_mib', 0)
+                cpu_pct = (cpu_millicores / 1000.0 / alloc_cpu * 100.0) if alloc_cpu > 0 else 0.0
+                mem_pct = (memory_mib / alloc_mem * 100.0) if alloc_mem > 0 else 0.0
+                METRIC_NODE_CPU_UTIL_PCT.labels(node=node_name).set(cpu_pct)
+                METRIC_NODE_MEM_UTIL_PCT.labels(node=node_name).set(mem_pct)
+    except Exception:
+        pass
+
+    # Update cache timestamp after successful full scan
+    _metrics_cached_at = time.time()
+
 
 app = Flask(__name__, template_folder='templates', static_folder='static')
 app.secret_key = SECRET_KEY
+# Force template refresh so mounted template changes are visible without
+# relying on Flask debug mode.
+app.config['TEMPLATES_AUTO_RELOAD'] = True
+app.jinja_env.auto_reload = True
 DNS_LABEL_RE = re.compile(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
 VALID_ROLES = {'cluster-admin', 'admin', 'developer', 'viewer'}
 
@@ -95,6 +401,15 @@ def inject_identity():
     return {'identity': current_identity()}
 
 
+@app.after_request
+def disable_html_cache(response):
+    if response.mimetype == 'text/html':
+        response.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate, max-age=0'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    return response
+
+
 @app.route('/')
 def index():
     if not session.get('role'):
@@ -107,6 +422,7 @@ def login():
     if request.method == 'POST':
         role = request.form.get('role', '').strip().lower()
         namespace = request.form.get('namespace', '').strip().lower()
+        password = request.form.get('password', '').strip()
 
         if role not in VALID_ROLES:
             return render_template(
@@ -135,6 +451,15 @@ def login():
                 roles=ROLE_PERMISSIONS,
                 error='Tenant admin, developer, and viewer sessions must be scoped to a tenant namespace.'
             ), 400
+
+        if role in ('admin', 'developer', 'viewer') and namespace:
+            expected = k8s.get_namespace_password(namespace)
+            if expected and password != expected:
+                return render_template(
+                    'login.html',
+                    roles=ROLE_PERMISSIONS,
+                    error='Incorrect namespace password.'
+                ), 403
 
         session['role'] = role
         session['namespace'] = namespace
@@ -166,7 +491,22 @@ def tenants():
 def resources_page(namespace):
     if not can_use_namespace(namespace):
         return redirect(url_for('dashboard'))
-    return render_template('resources.html', namespace=namespace)
+    grafana_base_url = (GRAFANA_PUBLIC_BASE_URL or GRAFANA_INTERNAL_BASE_URL).rstrip('/')
+    encoded_ns = quote_plus(namespace)
+    grafana_dashboard_url = (
+        f'{grafana_base_url}/d/k8s-namespace-resources'
+        f'?orgId=1&var-namespace={encoded_ns}&refresh=15s'
+    )
+    grafana_embed_url = (
+        f'{grafana_dashboard_url}'
+        '&from=now-1h&to=now&theme=light&kiosk'
+    )
+    return render_template(
+        'resources.html',
+        namespace=namespace,
+        grafana_dashboard_url=grafana_dashboard_url,
+        grafana_embed_url=grafana_embed_url
+    )
 
 
 @app.route('/kubeconfig')
@@ -220,10 +560,10 @@ def api_create_tenant():
         return jsonify({'error': 'Invalid namespace name. Use a DNS-compatible name: lowercase letters, numbers, hyphens, max 63 chars, and no leading/trailing hyphen.'}), 400
 
     try:
-        output = k8s.create_tenant(name)
+        result = k8s.create_tenant(name)
         if quota:
             k8s.apply_quota_overrides(name, quota)
-        return jsonify({'success': True, 'output': output})
+        return jsonify({'success': True, 'output': result.get('output'), 'password': result.get('password')})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -245,6 +585,20 @@ def api_delete_tenant(name):
 @require_namespace_access
 def api_namespace_resources(namespace):
     return jsonify(k8s.get_namespace_resources(namespace))
+
+
+@app.route('/api/namespaces/<namespace>/live-usage')
+@require_login
+@require_namespace_access
+def api_namespace_live_usage(namespace):
+    return jsonify(k8s.get_namespace_live_usage(namespace))
+
+
+@app.route('/api/namespaces/<namespace>/monitoring-diagnostics')
+@require_login
+@require_namespace_access
+def api_monitoring_diagnostics(namespace):
+    return jsonify(k8s.get_monitoring_diagnostics(namespace))
 
 
 @app.route('/api/namespaces/<namespace>/resource-settings', methods=['GET'])
@@ -325,6 +679,13 @@ def api_generate_kubeconfig(namespace):
         )
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/metrics')
+def metrics():
+    """Prometheus metrics endpoint — scraped by Prometheus for Grafana dashboards."""
+    _collect_metrics()
+    return Response(generate_latest(prom_registry), mimetype=CONTENT_TYPE_LATEST)
 
 
 if __name__ == '__main__':
