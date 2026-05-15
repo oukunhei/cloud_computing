@@ -590,6 +590,59 @@ class K8sClient:
 
         return f'Demo workload {name} Deployment and Service are present.'
 
+    def create_custom_pod(self, namespace, spec, owner):
+        if not self.connected:
+            raise RuntimeError('Not connected to Kubernetes')
+
+        name = self._required_dns_label(spec.get('name'), 'Pod name')
+        image = (spec.get('image') or '').strip()
+        if not image:
+            raise ValueError('Container image is required.')
+
+        container_name = self._required_dns_label(spec.get('container_name') or name, 'Container name')
+        labels = self._custom_pod_labels(spec.get('labels'), owner)
+        env = self._custom_pod_env(spec.get('env'))
+        ports = self._custom_pod_ports(spec.get('ports'))
+        resources = self._custom_pod_resources(spec.get('resources') or {})
+        command = self._string_list(spec.get('command'))
+        args = self._string_list(spec.get('args'))
+
+        container_kwargs = {
+            'name': container_name,
+            'image': image,
+            'image_pull_policy': spec.get('image_pull_policy') or 'IfNotPresent',
+            'env': env,
+            'ports': ports,
+            'resources': resources
+        }
+        if command:
+            container_kwargs['command'] = command
+        if args:
+            container_kwargs['args'] = args
+
+        pod = client.V1Pod(
+            metadata=client.V1ObjectMeta(
+                name=name,
+                namespace=namespace,
+                labels=labels,
+                annotations={
+                    'tenant.lab/created-by-role': owner or 'unknown',
+                    'tenant.lab/created-by': 'web-portal'
+                }
+            ),
+            spec=client.V1PodSpec(
+                restart_policy=spec.get('restart_policy') or 'Always',
+                containers=[client.V1Container(**container_kwargs)]
+            )
+        )
+
+        created = self.v1.create_namespaced_pod(namespace=namespace, body=pod)
+        return {
+            'name': created.metadata.name,
+            'namespace': namespace,
+            'status': created.status.phase if created.status else 'Pending'
+        }
+
     def delete_demo_workload(self, namespace, owner):
         if not self.connected:
             raise RuntimeError('Not connected to Kubernetes')
@@ -613,6 +666,86 @@ class K8sClient:
         if not deleted:
             return f'Demo workload {name} was already absent.'
         return f"Deleted demo workload {name} {' and '.join(deleted)}."
+
+    def _required_dns_label(self, value, label):
+        value = (value or '').strip().lower()
+        if not value:
+            raise ValueError(f'{label} is required.')
+        if len(value) > 63:
+            raise ValueError(f'{label} must be 63 characters or fewer.')
+        if not self._is_dns_label(value):
+            raise ValueError(f'{label} must use lowercase letters, numbers, and hyphens, with no leading or trailing hyphen.')
+        return value
+
+    def _is_dns_label(self, value):
+        if not value:
+            return False
+        if value[0] == '-' or value[-1] == '-':
+            return False
+        return all(c.islower() or c.isdigit() or c == '-' for c in value)
+
+    def _custom_pod_labels(self, labels, owner):
+        result = {
+            'app': 'custom-pod',
+            'tenant.lab/managed-by': 'web-portal',
+            'tenant.lab/owner-role': owner or 'unknown'
+        }
+        for item in labels or []:
+            key = (item.get('key') or '').strip()
+            value = (item.get('value') or '').strip()
+            if key and value:
+                result[key] = value
+        return result
+
+    def _custom_pod_env(self, env):
+        result = []
+        for item in env or []:
+            name = (item.get('name') or '').strip()
+            value = item.get('value')
+            if name:
+                result.append(client.V1EnvVar(name=name, value='' if value is None else str(value)))
+        return result
+
+    def _custom_pod_ports(self, ports):
+        result = []
+        for item in ports or []:
+            raw_port = item.get('container_port')
+            if raw_port in (None, ''):
+                continue
+            try:
+                port = int(raw_port)
+            except (TypeError, ValueError):
+                raise ValueError('Container ports must be numbers.')
+            if port < 1 or port > 65535:
+                raise ValueError('Container ports must be between 1 and 65535.')
+            result.append(client.V1ContainerPort(
+                name=(item.get('name') or None),
+                container_port=port,
+                protocol=item.get('protocol') or 'TCP'
+            ))
+        return result
+
+    def _custom_pod_resources(self, resources):
+        requests = self._compact_resource_map(resources.get('requests') or {})
+        limits = self._compact_resource_map(resources.get('limits') or {})
+        if not requests and not limits:
+            return None
+        return client.V1ResourceRequirements(requests=requests or None, limits=limits or None)
+
+    def _compact_resource_map(self, values):
+        allowed = {'cpu', 'memory'}
+        return {
+            key: str(value).strip()
+            for key, value in values.items()
+            if key in allowed and str(value).strip()
+        }
+
+    def _string_list(self, value):
+        if not value:
+            return []
+        if isinstance(value, str):
+            return [part.strip() for part in value.splitlines() if part.strip()]
+        return [str(part).strip() for part in value if str(part).strip()]
 
     def permission_checks(self, namespace, portal_role):
         from config import ROLE_PERMISSIONS
