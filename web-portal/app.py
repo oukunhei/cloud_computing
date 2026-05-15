@@ -386,7 +386,7 @@ def require_namespace_access(view):
 def require_workload_write(view):
     @wraps(view)
     def wrapped(namespace, *args, **kwargs):
-        if session.get('role') not in ('admin', 'developer'):
+        if session.get('role') not in ('cluster-admin', 'admin', 'developer'):
             return jsonify({'error': f'{display_role(session.get("role"))} cannot create or delete tenant workloads from this portal action.'}), 403
         if not can_use_namespace(namespace):
             return jsonify({
@@ -619,6 +619,20 @@ def api_create_demo_workload(namespace):
     try:
         message = k8s.create_demo_workload(namespace, session.get('role'))
         return jsonify({'success': True, 'message': message})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/namespaces/<namespace>/pods', methods=['POST'])
+@require_login
+@require_workload_write
+def api_create_custom_pod(namespace):
+    data = request.get_json() or {}
+    try:
+        pod = k8s.create_custom_pod(namespace, data, session.get('role'))
+        return jsonify({'success': True, 'message': f'Pod {pod["name"]} created in namespace {namespace}.', 'pod': pod})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

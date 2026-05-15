@@ -24,6 +24,127 @@
     </div>
 </div>
 
+{% set can_create_pods = identity.role in ['cluster-admin', 'admin', 'developer'] %}
+<div class="row g-4 mb-4">
+    <div class="col-xl-5">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <span><i class="bi bi-box-seam me-2"></i>Create Custom Pod</span>
+                <span class="badge bg-light text-primary">{{ namespace }}</span>
+            </div>
+            <div class="card-body">
+                {% if can_create_pods %}
+                <form id="custom-pod-form">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label">Pod Name</label>
+                            <input class="form-control" id="pod-name" placeholder="e.g. api-smoke-test" required>
+                            <div class="form-text">Lowercase DNS label.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Container Name</label>
+                            <input class="form-control" id="container-name" placeholder="default: pod name">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Image</label>
+                            <input class="form-control" id="pod-image" value="nginx:alpine" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Container Port</label>
+                            <input class="form-control" id="pod-port" type="number" min="1" max="65535" value="80">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Restart Policy</label>
+                            <select class="form-select" id="restart-policy">
+                                <option value="Always">Always</option>
+                                <option value="OnFailure">OnFailure</option>
+                                <option value="Never">Never</option>
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">CPU Request</label>
+                            <input class="form-control" id="request-cpu" value="100m">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Memory Request</label>
+                            <input class="form-control" id="request-memory" value="128Mi">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">CPU Limit</label>
+                            <input class="form-control" id="limit-cpu" value="500m">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Memory Limit</label>
+                            <input class="form-control" id="limit-memory" value="512Mi">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Environment Variables</label>
+                            <textarea class="form-control" id="pod-env" rows="2" placeholder="KEY=value&#10;MODE=demo"></textarea>
+                            <div class="form-text">One <code>KEY=value</code> per line.</div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label">Command / Args</label>
+                            <textarea class="form-control" id="pod-command" rows="2" placeholder="/bin/sh&#10;-c"></textarea>
+                            <textarea class="form-control mt-2" id="pod-args" rows="2" placeholder="echo hello && sleep 3600"></textarea>
+                            <div class="form-text">Optional. One list item per line; leave empty to use image defaults.</div>
+                        </div>
+                    </div>
+                    <div id="pod-create-error" class="alert alert-danger d-none mt-3"></div>
+                    <div class="d-flex gap-2 mt-3">
+                        <button class="btn btn-primary" type="submit" id="btn-create-pod">
+                            <span class="spinner-border spinner-border-sm d-none" id="pod-create-spinner"></span>
+                            Create Pod
+                        </button>
+                        <button class="btn btn-outline-secondary" type="button" onclick="resetPodForm()">Reset</button>
+                    </div>
+                </form>
+                {% else %}
+                <div class="alert alert-info mb-0">
+                    <i class="bi bi-eye me-2"></i>
+                    {{ identity.display_role }} can monitor this namespace, but cannot create Pods.
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-7">
+        <div class="card border-0 shadow-sm h-100">
+            <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                <span><i class="bi bi-list-check me-2"></i>Current Pods</span>
+                <button class="btn btn-sm btn-outline-primary" onclick="loadNamespacePods()">
+                    <i class="bi bi-arrow-clockwise"></i> Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-hover align-middle" id="namespace-pods-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Name</th>
+                                <th>Status</th>
+                                <th>Ready</th>
+                                <th>Restarts</th>
+                                <th>Age</th>
+                                <th>Requests</th>
+                                <th>Limits</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div id="pods-loading" class="text-center text-muted py-4">
+                    <div class="spinner-border text-primary" role="status"></div>
+                    <p class="mt-2 mb-0">Loading Pods...</p>
+                </div>
+                <div id="no-pods" class="text-center text-muted py-4 d-none">
+                    <i class="bi bi-inbox fs-1"></i>
+                    <p class="mt-2 mb-0">No Pods in this namespace yet.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row">
     <div class="col-12">
         <div class="card border-0 shadow-sm">
@@ -56,6 +177,9 @@
 
 {% block scripts %}
 <script>
+const NAMESPACE = {{ namespace | tojson }};
+const CAN_CREATE_PODS = {{ 'true' if can_create_pods else 'false' }};
+
 function toggleGrafanaFullscreen() {
     const container = document.getElementById('grafana-container');
     if (!document.fullscreenElement) {
@@ -64,5 +188,155 @@ function toggleGrafanaFullscreen() {
         document.exitFullscreen();
     }
 }
+
+function resourceSummary(values) {
+    if (!values || Object.keys(values).length === 0) return '-';
+    return Object.entries(values)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join('<br>');
+}
+
+function statusBadge(status) {
+    const classes = {
+        Running: 'bg-success',
+        Pending: 'bg-warning text-dark',
+        Failed: 'bg-danger',
+        Succeeded: 'bg-info text-dark'
+    };
+    return `<span class="badge ${classes[status] || 'bg-secondary'}">${status || 'Unknown'}</span>`;
+}
+
+async function loadNamespacePods() {
+    const table = document.getElementById('namespace-pods-table');
+    const tbody = table.querySelector('tbody');
+    const loading = document.getElementById('pods-loading');
+    const empty = document.getElementById('no-pods');
+
+    loading.classList.remove('d-none');
+    empty.classList.add('d-none');
+    table.classList.add('d-none');
+
+    try {
+        const data = await apiGet(`/api/namespaces/${NAMESPACE}/resources`);
+        loading.classList.add('d-none');
+        if (data.error || data.pods_error) {
+            showError(data.error || data.pods_error);
+            return;
+        }
+        const pods = data.pods || [];
+        if (pods.length === 0) {
+            empty.classList.remove('d-none');
+            return;
+        }
+        table.classList.remove('d-none');
+        tbody.innerHTML = pods.map(pod => `
+            <tr>
+                <td><code>${pod.name}</code></td>
+                <td>${statusBadge(pod.status)}</td>
+                <td>${pod.ready || '-'}</td>
+                <td>${pod.restarts ?? 0}</td>
+                <td>${pod.age || '-'}</td>
+                <td class="small">${resourceSummary(pod.requests)}</td>
+                <td class="small">${resourceSummary(pod.limits)}</td>
+            </tr>
+        `).join('');
+    } catch (e) {
+        loading.classList.add('d-none');
+        showError('Failed to load namespace Pods');
+    }
+}
+
+function parseKeyValueLines(value) {
+    return value.split('\n')
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map(line => {
+            const idx = line.indexOf('=');
+            if (idx === -1) return { name: line, value: '' };
+            return {
+                name: line.slice(0, idx).trim(),
+                value: line.slice(idx + 1).trim()
+            };
+        })
+        .filter(item => item.name);
+}
+
+function parseLines(value) {
+    return value.split('\n').map(line => line.trim()).filter(Boolean);
+}
+
+function resetPodForm() {
+    document.getElementById('custom-pod-form').reset();
+    document.getElementById('pod-image').value = 'nginx:alpine';
+    document.getElementById('pod-port').value = '80';
+    document.getElementById('request-cpu').value = '100m';
+    document.getElementById('request-memory').value = '128Mi';
+    document.getElementById('limit-cpu').value = '500m';
+    document.getElementById('limit-memory').value = '512Mi';
+    document.getElementById('pod-create-error').classList.add('d-none');
+}
+
+async function createCustomPod(event) {
+    event.preventDefault();
+    const errorEl = document.getElementById('pod-create-error');
+    const button = document.getElementById('btn-create-pod');
+    const spinner = document.getElementById('pod-create-spinner');
+    const port = document.getElementById('pod-port').value.trim();
+
+    const payload = {
+        name: document.getElementById('pod-name').value.trim().toLowerCase(),
+        container_name: document.getElementById('container-name').value.trim().toLowerCase(),
+        image: document.getElementById('pod-image').value.trim(),
+        restart_policy: document.getElementById('restart-policy').value,
+        ports: port ? [{ container_port: port, protocol: 'TCP' }] : [],
+        resources: {
+            requests: {
+                cpu: document.getElementById('request-cpu').value.trim(),
+                memory: document.getElementById('request-memory').value.trim()
+            },
+            limits: {
+                cpu: document.getElementById('limit-cpu').value.trim(),
+                memory: document.getElementById('limit-memory').value.trim()
+            }
+        },
+        env: parseKeyValueLines(document.getElementById('pod-env').value),
+        command: parseLines(document.getElementById('pod-command').value),
+        args: parseLines(document.getElementById('pod-args').value)
+    };
+
+    if (!payload.name || !payload.image) {
+        errorEl.textContent = 'Pod name and image are required.';
+        errorEl.classList.remove('d-none');
+        return;
+    }
+
+    button.disabled = true;
+    spinner.classList.remove('d-none');
+    errorEl.classList.add('d-none');
+
+    try {
+        const result = await apiPost(`/api/namespaces/${NAMESPACE}/pods`, payload);
+        if (result.error) {
+            errorEl.textContent = result.error;
+            errorEl.classList.remove('d-none');
+        } else {
+            showToast(result.message || 'Pod created successfully.', 'success');
+            await loadNamespacePods();
+        }
+    } catch (e) {
+        errorEl.textContent = e.message || 'Failed to create Pod.';
+        errorEl.classList.remove('d-none');
+    } finally {
+        button.disabled = false;
+        spinner.classList.add('d-none');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    loadNamespacePods();
+    if (CAN_CREATE_PODS) {
+        document.getElementById('custom-pod-form').addEventListener('submit', createCustomPod);
+    }
+});
 </script>
 {% endblock %}
