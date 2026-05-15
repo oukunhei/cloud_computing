@@ -235,8 +235,8 @@ KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/oukunhei/Kubernetes_Lab_Platform.git
-cd Kubernetes_Lab_Platform
+git clone https://github.com/SHENZhouan/cloud_computing.git
+cd cloud_computing
 ```
 
 ### 2. Start the Web Portal
