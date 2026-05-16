@@ -25,10 +25,11 @@
             Portal template: {{ portal_build_id }}
             <span id="portal-version" class="ms-2">Checking backend...</span>
         </p>
+        <p class="small text-muted mb-0" id="pod-create-diagnostics">Loading pod diagnostics...</p>
     </div>
 </div>
 
-{% set can_create_pods = identity.role in ['cluster-admin', 'admin', 'developer'] %}
+{% set can_create_pods = identity.role == 'cluster-admin' or (identity.namespace == namespace and identity.role in ['admin', 'developer']) %}
 <div class="row g-4 mb-4">
     <div class="col-xl-5">
         <div class="card border-0 shadow-sm h-100">
@@ -270,6 +271,21 @@ async function loadPortalVersion() {
     }
 }
 
+async function loadPodCreateDiagnostics() {
+    const el = document.getElementById('pod-create-diagnostics');
+    if (!el) return;
+    try {
+        const data = await apiGet(`/api/namespaces/${NAMESPACE}/pod-create-diagnostics`);
+        if (data.error) {
+            el.textContent = `Pod diagnostics error: ${data.error}`;
+            return;
+        }
+        el.textContent = `Pod create diagnostics: namespace exists=${data.namespace_exists ? 'yes' : 'no'}, can create pods=${data.can_create_pods ? 'yes' : 'no'}`;
+    } catch (e) {
+        el.textContent = 'Pod diagnostics endpoint is unavailable.';
+    }
+}
+
 function renderNamespacePods(pods) {
     const table = document.getElementById('namespace-pods-table');
     const tbody = table.querySelector('tbody');
@@ -418,6 +434,7 @@ async function createCustomPod(event) {
 
 document.addEventListener('DOMContentLoaded', () => {
     loadPortalVersion();
+    loadPodCreateDiagnostics();
     loadNamespacePods();
     if (CAN_CREATE_PODS) {
         document.getElementById('custom-pod-form').addEventListener('submit', createCustomPod);
