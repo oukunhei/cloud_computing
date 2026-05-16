@@ -111,7 +111,8 @@ if [ "${FULL_RESET:-false}" = "true" ]; then
     warn "FULL_RESET=true: removing existing containers, networks, and named volumes."
     compose down --volumes --remove-orphans
 fi
-compose up -d --build
+compose up -d --build --force-recreate web
+compose up -d prometheus grafana
 
 log "Waiting for portal HTTP endpoint (port ${FLASK_PORT})"
 for i in {1..60}; do
@@ -125,6 +126,15 @@ for i in {1..60}; do
     fi
     sleep 2
 done
+
+log "Checking portal backend build"
+PORTAL_VERSION_JSON="$(curl -fsS "http://127.0.0.1:${FLASK_PORT}/api/portal/version" || true)"
+if echo "$PORTAL_VERSION_JSON" | grep -q "custom-pod-create-v2"; then
+    ok "Portal backend is running the custom Pod creation build: ${PORTAL_VERSION_JSON}"
+else
+    compose logs --tail=80 web || true
+    fail "Portal backend version check did not return custom-pod-create-v2. Response was: ${PORTAL_VERSION_JSON:-<empty>}. Stop old portal processes/containers or rerun with FULL_RESET=true."
+fi
 
 log "Waiting for Prometheus (port 9090)"
 for i in {1..30}; do

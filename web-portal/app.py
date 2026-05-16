@@ -315,6 +315,7 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
 DNS_LABEL_RE = re.compile(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
 VALID_ROLES = {'cluster-admin', 'admin', 'developer', 'viewer'}
+PORTAL_BUILD_ID = 'custom-pod-create-v2'
 
 
 def current_identity():
@@ -398,7 +399,7 @@ def require_workload_write(view):
 
 @app.context_processor
 def inject_identity():
-    return {'identity': current_identity()}
+    return {'identity': current_identity(), 'portal_build_id': PORTAL_BUILD_ID}
 
 
 @app.after_request
@@ -521,6 +522,15 @@ def settings_page():
 @app.route('/api/cluster/info')
 def api_cluster_info():
     return jsonify(k8s.get_cluster_info())
+
+
+@app.route('/api/portal/version')
+def api_portal_version():
+    return jsonify({
+        'build_id': PORTAL_BUILD_ID,
+        'custom_pod_api': True,
+        'kubernetes_connected': k8s.is_connected()
+    })
 
 
 @app.route('/api/tenants', methods=['GET'])
