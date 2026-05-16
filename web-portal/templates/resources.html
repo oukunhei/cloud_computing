@@ -21,11 +21,6 @@
             scoped to <code>{{ identity.namespace }}</code>
             {% endif %}
         </p>
-        <p class="small text-muted mb-0">
-            Portal template: {{ portal_build_id }}
-            <span id="portal-version" class="ms-2">Checking backend...</span>
-        </p>
-        <p class="small text-muted mb-0" id="pod-create-diagnostics">Loading pod diagnostics...</p>
     </div>
 </div>
 
@@ -104,10 +99,6 @@
                         </div>
                     </div>
                     <div id="pod-create-error" class="alert alert-danger d-none mt-3"></div>
-                    <div class="alert alert-light border mt-3 mb-0">
-                        <div class="small text-muted mb-2">Debug trace</div>
-                        <pre class="mb-0 small" id="pod-debug" style="white-space: pre-wrap; max-height: 220px; overflow: auto;">Waiting for interaction...</pre>
-                    </div>
                     <div class="d-flex gap-2 mt-3">
                         <button class="btn btn-primary" type="button" id="btn-create-pod" onclick="createCustomPodFromButton(event)">
                             <span class="spinner-border spinner-border-sm d-none" id="pod-create-spinner"></span>
@@ -228,14 +219,6 @@ function statusBadge(status) {
     return `<span class="badge ${classes[status] || 'bg-secondary'}">${status || 'Unknown'}</span>`;
 }
 
-function appendPodDebug(message, data = null) {
-    const el = document.getElementById('pod-debug');
-    if (!el) return;
-    const line = data === null ? message : `${message} ${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}`;
-    el.textContent = `${el.textContent}\n${line}`.trim();
-    console.debug('[pod-debug]', message, data);
-}
-
 async function loadNamespacePods() {
     const table = document.getElementById('namespace-pods-table');
     const tbody = table.querySelector('tbody');
@@ -265,36 +248,6 @@ async function loadNamespacePods() {
         loading.classList.add('d-none');
         showError('Failed to load namespace Pods');
         return [];
-    }
-}
-
-async function loadPortalVersion() {
-    const el = document.getElementById('portal-version');
-    if (!el) return;
-    try {
-        const data = await apiGet('/api/portal/version');
-        if (data.error) {
-            el.textContent = `Portal backend check failed: ${data.error}`;
-            return;
-        }
-        el.textContent = `Portal backend: ${data.build_id}; Kubernetes connected: ${data.kubernetes_connected ? 'yes' : 'no'}`;
-    } catch (e) {
-        el.textContent = 'Portal backend version endpoint is unavailable. Restart the web service so the latest backend code is running.';
-    }
-}
-
-async function loadPodCreateDiagnostics() {
-    const el = document.getElementById('pod-create-diagnostics');
-    if (!el) return;
-    try {
-        const data = await apiGet(`/api/namespaces/${NAMESPACE}/pod-create-diagnostics`);
-        if (data.error) {
-            el.textContent = `Pod diagnostics error: ${data.error}`;
-            return;
-        }
-        el.textContent = `Pod create diagnostics: namespace exists=${data.namespace_exists ? 'yes' : 'no'}, can create pods=${data.can_create_pods ? 'yes' : 'no'}`;
-    } catch (e) {
-        el.textContent = 'Pod diagnostics endpoint is unavailable.';
     }
 }
 
@@ -380,7 +333,6 @@ async function createCustomPod(event) {
         event.preventDefault();
         event.stopPropagation();
     }
-    appendPodDebug('submit event fired');
     const errorEl = document.getElementById('pod-create-error');
     const button = document.getElementById('btn-create-pod');
     const spinner = document.getElementById('pod-create-spinner');
@@ -409,10 +361,7 @@ async function createCustomPod(event) {
         args: parseLines(document.getElementById('pod-args').value)
     };
 
-    appendPodDebug('payload built', payload);
-
     if (!payload.name || !payload.image) {
-        appendPodDebug('client validation failed', 'missing name or image');
         errorEl.textContent = 'Pod name and image are required.';
         errorEl.classList.remove('d-none');
         return;
@@ -420,7 +369,6 @@ async function createCustomPod(event) {
     const requestCpu = cpuToMillicores(payload.resources.requests.cpu);
     const limitCpu = cpuToMillicores(payload.resources.limits.cpu);
     if (requestCpu && limitCpu && limitCpu / requestCpu > 4) {
-        appendPodDebug('client validation failed', `cpu ratio ${limitCpu / requestCpu}`);
         errorEl.textContent = 'Default namespace policy allows CPU limit/request ratio up to 4. Example: 100m request with 400m limit, or raise the request.';
         errorEl.classList.remove('d-none');
         return;
@@ -431,9 +379,7 @@ async function createCustomPod(event) {
     errorEl.classList.add('d-none');
 
     try {
-        appendPodDebug('posting to backend', `/api/namespaces/${NAMESPACE}/pods`);
         const result = await apiPost(`/api/namespaces/${NAMESPACE}/pods`, payload);
-        appendPodDebug('backend response', result);
         if (result.error) {
             errorEl.textContent = result.error;
             errorEl.classList.remove('d-none');
@@ -455,29 +401,17 @@ async function createCustomPod(event) {
 }
 
 function createCustomPodFromButton(event) {
-    appendPodDebug('create button inline handler fired');
     createCustomPod(event);
     return false;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    appendPodDebug('DOMContentLoaded fired');
-    loadPortalVersion();
-    loadPodCreateDiagnostics();
     loadNamespacePods();
     if (CAN_CREATE_PODS) {
         const form = document.getElementById('custom-pod-form');
         const button = document.getElementById('btn-create-pod');
         form.addEventListener('submit', createCustomPod);
-        button.addEventListener('click', () => appendPodDebug('create button clicked'));
-        form.addEventListener('invalid', (e) => {
-            appendPodDebug('native validation blocked submit', `${e.target.id || e.target.name || e.target.tagName}`);
-        }, true);
     }
-});
-
-window.addEventListener('error', (event) => {
-    appendPodDebug('window error', event.message || 'unknown error');
 });
 </script>
 {% endblock %}

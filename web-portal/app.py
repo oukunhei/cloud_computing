@@ -533,19 +533,6 @@ def api_portal_version():
     })
 
 
-@app.route('/api/namespaces/<namespace>/pod-create-diagnostics')
-@require_login
-@require_namespace_access
-def api_pod_create_diagnostics(namespace):
-    return jsonify({
-        'namespace': namespace,
-        'role': session.get('role'),
-        'can_create_pods': session.get('role') in ('cluster-admin', 'admin', 'developer'),
-        'namespace_exists': not bool(k8s.get_namespace_resources(namespace).get('error')),
-        'namespace_resources': k8s.get_namespace_resources(namespace).get('quota', {}),
-    })
-
-
 @app.route('/api/tenants', methods=['GET'])
 @require_login
 def api_list_tenants():
