@@ -39,7 +39,7 @@
             </div>
             <div class="card-body">
                 {% if can_create_pods %}
-                <form id="custom-pod-form" novalidate>
+                <form id="custom-pod-form" novalidate onsubmit="return false;">
                     <div class="row g-3">
                         <div class="col-md-6">
                             <label class="form-label">Pod Name</label>
@@ -109,7 +109,7 @@
                         <pre class="mb-0 small" id="pod-debug" style="white-space: pre-wrap; max-height: 220px; overflow: auto;">Waiting for interaction...</pre>
                     </div>
                     <div class="d-flex gap-2 mt-3">
-                        <button class="btn btn-primary" type="submit" id="btn-create-pod">
+                        <button class="btn btn-primary" type="button" id="btn-create-pod" onclick="createCustomPodFromButton(event)">
                             <span class="spinner-border spinner-border-sm d-none" id="pod-create-spinner"></span>
                             Create Pod
                         </button>
@@ -376,7 +376,10 @@ function resetPodForm() {
 }
 
 async function createCustomPod(event) {
-    event.preventDefault();
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
     appendPodDebug('submit event fired');
     const errorEl = document.getElementById('pod-create-error');
     const button = document.getElementById('btn-create-pod');
@@ -449,6 +452,12 @@ async function createCustomPod(event) {
         button.disabled = false;
         spinner.classList.add('d-none');
     }
+}
+
+function createCustomPodFromButton(event) {
+    appendPodDebug('create button inline handler fired');
+    createCustomPod(event);
+    return false;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
