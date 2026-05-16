@@ -21,6 +21,10 @@
             scoped to <code>{{ identity.namespace }}</code>
             {% endif %}
         </p>
+        <p class="small text-muted mb-0">
+            Portal template: {{ portal_build_id }}
+            <span id="portal-version" class="ms-2">Checking backend...</span>
+        </p>
     </div>
 </div>
 
@@ -77,6 +81,14 @@
                         <div class="col-md-6">
                             <label class="form-label">Memory Limit</label>
                             <input class="form-control" id="limit-memory" value="512Mi">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Ephemeral Storage Request</label>
+                            <input class="form-control" id="request-ephemeral-storage" value="512Mi">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Ephemeral Storage Limit</label>
+                            <input class="form-control" id="limit-ephemeral-storage" value="1Gi">
                         </div>
                         <div class="col-12">
                             <label class="form-label">Environment Variables</label>
@@ -243,6 +255,21 @@ async function loadNamespacePods() {
     }
 }
 
+async function loadPortalVersion() {
+    const el = document.getElementById('portal-version');
+    if (!el) return;
+    try {
+        const data = await apiGet('/api/portal/version');
+        if (data.error) {
+            el.textContent = `Portal backend check failed: ${data.error}`;
+            return;
+        }
+        el.textContent = `Portal backend: ${data.build_id}; Kubernetes connected: ${data.kubernetes_connected ? 'yes' : 'no'}`;
+    } catch (e) {
+        el.textContent = 'Portal backend version endpoint is unavailable. Restart the web service so the latest backend code is running.';
+    }
+}
+
 function renderNamespacePods(pods) {
     const table = document.getElementById('namespace-pods-table');
     const tbody = table.querySelector('tbody');
@@ -315,6 +342,8 @@ function resetPodForm() {
     document.getElementById('request-memory').value = '128Mi';
     document.getElementById('limit-cpu').value = '400m';
     document.getElementById('limit-memory').value = '512Mi';
+    document.getElementById('request-ephemeral-storage').value = '512Mi';
+    document.getElementById('limit-ephemeral-storage').value = '1Gi';
     document.getElementById('pod-create-error').classList.add('d-none');
 }
 
@@ -334,11 +363,13 @@ async function createCustomPod(event) {
         resources: {
             requests: {
                 cpu: document.getElementById('request-cpu').value.trim(),
-                memory: document.getElementById('request-memory').value.trim()
+                memory: document.getElementById('request-memory').value.trim(),
+                'ephemeral-storage': document.getElementById('request-ephemeral-storage').value.trim()
             },
             limits: {
                 cpu: document.getElementById('limit-cpu').value.trim(),
-                memory: document.getElementById('limit-memory').value.trim()
+                memory: document.getElementById('limit-memory').value.trim(),
+                'ephemeral-storage': document.getElementById('limit-ephemeral-storage').value.trim()
             }
         },
         env: parseKeyValueLines(document.getElementById('pod-env').value),
@@ -386,6 +417,7 @@ async function createCustomPod(event) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+    loadPortalVersion();
     loadNamespacePods();
     if (CAN_CREATE_PODS) {
         document.getElementById('custom-pod-form').addEventListener('submit', createCustomPod);

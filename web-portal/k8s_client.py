@@ -737,7 +737,7 @@ class K8sClient:
         return client.V1ResourceRequirements(requests=requests or None, limits=limits or None)
 
     def _compact_resource_map(self, values):
-        allowed = {'cpu', 'memory'}
+        allowed = {'cpu', 'memory', 'ephemeral-storage'}
         return {
             key: str(value).strip()
             for key, value in values.items()
