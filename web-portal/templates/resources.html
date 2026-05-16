@@ -24,7 +24,8 @@
     </div>
 </div>
 
-{% set can_create_pods = identity.role == 'cluster-admin' or (identity.namespace == namespace and identity.role in ['admin', 'developer']) %}
+{% set can_create_pods = identity.namespace == namespace and identity.role in ['admin', 'developer'] %}
+{% set can_delete_pods = identity.namespace == namespace and identity.role == 'admin' %}
 <div class="row g-4 mb-4">
     <div class="col-xl-5">
         <div class="card border-0 shadow-sm h-100">
@@ -110,7 +111,7 @@
                 {% else %}
                 <div class="alert alert-info mb-0">
                     <i class="bi bi-eye me-2"></i>
-                    {{ identity.display_role }} can monitor this namespace, but cannot create Pods.
+                    {{ identity.display_role }} can monitor this namespace, but cannot create Pods from this portal page.
                 </div>
                 {% endif %}
             </div>
@@ -140,6 +141,9 @@
                                 <th>Age</th>
                                 <th>Requests</th>
                                 <th>Limits</th>
+                                {% if can_delete_pods %}
+                                <th class="text-end">Actions</th>
+                                {% endif %}
                             </tr>
                         </thead>
                         <tbody></tbody>
@@ -192,6 +196,7 @@
 <script>
 const NAMESPACE = {{ namespace | tojson }};
 const CAN_CREATE_PODS = {{ 'true' if can_create_pods else 'false' }};
+const CAN_DELETE_PODS = {{ 'true' if can_delete_pods else 'false' }};
 
 function toggleGrafanaFullscreen() {
     const container = document.getElementById('grafana-container');
@@ -273,6 +278,13 @@ function renderNamespacePods(pods) {
                 <td>${pod.age || '-'}</td>
                 <td class="small">${resourceSummary(pod.requests)}</td>
                 <td class="small">${resourceSummary(pod.limits)}</td>
+                ${CAN_DELETE_PODS ? `
+                <td class="text-end">
+                    <button class="btn btn-sm btn-outline-danger" onclick="deletePod('${pod.name}')">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </td>
+                ` : ''}
             </tr>
         `).join('');
 }
@@ -403,6 +415,23 @@ async function createCustomPod(event) {
 function createCustomPodFromButton(event) {
     createCustomPod(event);
     return false;
+}
+
+async function deletePod(podName) {
+    if (!CAN_DELETE_PODS) return;
+    if (!confirm(`Delete Pod ${podName} from namespace ${NAMESPACE}?`)) return;
+
+    try {
+        const result = await apiDelete(`/api/namespaces/${NAMESPACE}/pods/${podName}`);
+        if (result.error) {
+            showError(result.error);
+            return;
+        }
+        showToast(result.message || `Pod ${podName} deletion requested.`, 'success');
+        await loadNamespacePods();
+    } catch (e) {
+        showError(e.message || `Failed to delete Pod ${podName}.`);
+    }
 }
 
 document.addEventListener('DOMContentLoaded', () => {

@@ -387,11 +387,24 @@ def require_namespace_access(view):
 def require_workload_write(view):
     @wraps(view)
     def wrapped(namespace, *args, **kwargs):
-        if session.get('role') not in ('cluster-admin', 'admin', 'developer'):
+        if session.get('role') not in ('admin', 'developer'):
             return jsonify({'error': f'{display_role(session.get("role"))} cannot create or delete tenant workloads from this portal action.'}), 403
         if not can_use_namespace(namespace):
             return jsonify({
                 'error': f'Your simulated {session.get("role")} session is scoped to namespace {session.get("namespace")}.'
+            }), 403
+        return view(namespace, *args, **kwargs)
+    return wrapped
+
+
+def require_tenant_admin_workload_delete(view):
+    @wraps(view)
+    def wrapped(namespace, *args, **kwargs):
+        if session.get('role') != 'admin':
+            return jsonify({'error': f'{display_role(session.get("role"))} cannot delete Pods from this portal action.'}), 403
+        if not can_use_namespace(namespace):
+            return jsonify({
+                'error': f'Your simulated admin session is scoped to namespace {session.get("namespace")}.'
             }), 403
         return view(namespace, *args, **kwargs)
     return wrapped
@@ -651,6 +664,21 @@ def api_create_custom_pod(namespace):
         return jsonify({'error': str(e)}), 500
     except Exception as e:
         return jsonify({'error': f'Unexpected error while creating Pod: {e}'}), 500
+
+
+@app.route('/api/namespaces/<namespace>/pods/<pod_name>', methods=['DELETE'])
+@require_login
+@require_tenant_admin_workload_delete
+def api_delete_pod(namespace, pod_name):
+    try:
+        message = k8s.delete_pod(namespace, pod_name)
+        return jsonify({'success': True, 'message': message})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'error': f'Unexpected error while deleting Pod: {e}'}), 500
 
 
 @app.route('/api/namespaces/<namespace>/demo-workload', methods=['DELETE'])

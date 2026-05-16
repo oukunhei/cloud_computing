@@ -673,6 +673,21 @@ class K8sClient:
             return f'Demo workload {name} was already absent.'
         return f"Deleted demo workload {name} {' and '.join(deleted)}."
 
+    def delete_pod(self, namespace, name):
+        if not self.connected:
+            raise RuntimeError('Not connected to Kubernetes')
+
+        self._ensure_namespace_exists(namespace)
+        name = self._required_dns_label(name, 'Pod name')
+        try:
+            self.v1.delete_namespaced_pod(name=name, namespace=namespace)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                raise ValueError(f'Pod {name} does not exist in namespace {namespace}.')
+            raise RuntimeError(self._format_api_exception(e))
+
+        return f'Pod {name} deletion requested in namespace {namespace}.'
+
     def _required_dns_label(self, value, label):
         value = (value or '').strip().lower()
         if not value:
