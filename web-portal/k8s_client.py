@@ -595,6 +595,7 @@ class K8sClient:
         if not self.connected:
             raise RuntimeError('Not connected to Kubernetes')
 
+        self._ensure_namespace_exists(namespace)
         name = self._required_dns_label(spec.get('name'), 'Pod name')
         image = (spec.get('image') or '').strip()
         if not image:
@@ -645,7 +646,8 @@ class K8sClient:
         except client.exceptions.ApiException as e:
             raise RuntimeError(self._format_api_exception(e))
 
-        return self._pod_summary(created)
+        confirmed = self._wait_for_pod(namespace, name)
+        return self._pod_summary(confirmed or created)
 
     def delete_demo_workload(self, namespace, owner):
         if not self.connected:
@@ -759,6 +761,25 @@ class K8sClient:
             if e.status == 404:
                 return False
             raise RuntimeError(self._format_api_exception(e))
+
+    def _ensure_namespace_exists(self, namespace):
+        try:
+            self.v1.read_namespace(name=namespace)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                raise ValueError(f'Namespace {namespace} does not exist. Create or onboard the namespace first.')
+            raise RuntimeError(self._format_api_exception(e))
+
+    def _wait_for_pod(self, namespace, name, attempts=10, delay_seconds=0.5):
+        for _ in range(attempts):
+            try:
+                return self.v1.read_namespaced_pod(name=name, namespace=namespace)
+            except client.exceptions.ApiException as e:
+                if e.status != 404:
+                    raise RuntimeError(self._format_api_exception(e))
+            import time
+            time.sleep(delay_seconds)
+        return None
 
     def _pod_summary(self, pod):
         return {

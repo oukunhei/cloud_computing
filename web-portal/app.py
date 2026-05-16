@@ -533,6 +533,19 @@ def api_portal_version():
     })
 
 
+@app.route('/api/namespaces/<namespace>/pod-create-diagnostics')
+@require_login
+@require_namespace_access
+def api_pod_create_diagnostics(namespace):
+    return jsonify({
+        'namespace': namespace,
+        'role': session.get('role'),
+        'can_create_pods': session.get('role') in ('cluster-admin', 'admin', 'developer'),
+        'namespace_exists': not bool(k8s.get_namespace_resources(namespace).get('error')),
+        'namespace_resources': k8s.get_namespace_resources(namespace).get('quota', {}),
+    })
+
+
 @app.route('/api/tenants', methods=['GET'])
 @require_login
 def api_list_tenants():
@@ -640,7 +653,11 @@ def api_create_custom_pod(namespace):
     data = request.get_json() or {}
     try:
         pod = k8s.create_custom_pod(namespace, data, session.get('role'))
-        return jsonify({'success': True, 'message': f'Pod {pod["name"]} created in namespace {namespace}.', 'pod': pod})
+        return jsonify({
+            'success': True,
+            'message': f'Pod {pod["name"]} created in namespace {pod["namespace"]}.',
+            'pod': pod
+        })
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except RuntimeError as e:
