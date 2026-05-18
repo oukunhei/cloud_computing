@@ -530,6 +530,23 @@ function renderKeyValue(items) {
         `).join('');
 }
 
+function renderSimpleList(title, items) {
+    if (!items || items.length === 0) {
+        return `<p class="text-muted small mb-0">${escapeHtml(title)}: none</p>`;
+    }
+    return `
+        <h6 class="mt-3">${escapeHtml(title)}</h6>
+        <div class="table-responsive">
+            <table class="table table-sm align-middle mb-0">
+                <thead><tr><th>Summary</th></tr></thead>
+                <tbody>
+                    ${items.map(item => `<tr><td><code>${escapeHtml(item.summary || item)}</code></td></tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
 function renderConditions(conditions) {
     if (!conditions || conditions.length === 0) return '<p class="text-muted mb-0">No conditions reported.</p>';
     return `
@@ -633,6 +650,8 @@ function renderPodDiagnostics(data) {
                 </table>
             </div>
         ` : ''}
+        ${renderSimpleList('Node Taints', data.node_taints)}
+        ${renderSimpleList('Unmatched Taints', data.unmatched_taints)}
         ${renderCommandBlock(data.commands)}
         <h6 class="mt-3">Conditions</h6>
         ${renderConditions(data.conditions)}

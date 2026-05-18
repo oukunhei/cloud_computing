@@ -742,7 +742,9 @@ class K8sClient:
             raise RuntimeError(self._format_api_exception(e))
 
         events = self._pod_events(namespace, name, pod.metadata.uid)
-        diagnosis = self._infer_pod_diagnosis(pod, events)
+        node_taints = self._schedulable_node_taints()
+        unmatched_taints = self._unmatched_taints(pod.spec.tolerations or [], node_taints)
+        diagnosis = self._infer_pod_diagnosis(pod, events, unmatched_taints)
         containers = [self._container_diagnostic(c) for c in (pod.status.container_statuses or [])]
         init_containers = [self._container_diagnostic(c) for c in (pod.status.init_container_statuses or [])]
 
@@ -772,6 +774,8 @@ class K8sClient:
                 'created_at': pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else '',
                 'tolerations': [self._toleration_summary(t) for t in (pod.spec.tolerations or [])]
             },
+            'node_taints': node_taints,
+            'unmatched_taints': unmatched_taints,
             'diagnosis': diagnosis,
             'conditions': [self._pod_condition_diagnostic(c) for c in (pod.status.conditions or [])],
             'containers': containers,
@@ -862,6 +866,14 @@ class K8sClient:
 
     def _default_workload_tolerations(self):
         return [
+            client.V1Toleration(
+                operator='Exists',
+                effect='NoSchedule'
+            ),
+            client.V1Toleration(
+                operator='Exists',
+                effect='PreferNoSchedule'
+            ),
             client.V1Toleration(
                 key='node-role.kubernetes.io/control-plane',
                 operator='Exists',
@@ -977,6 +989,61 @@ class K8sClient:
             parts.append(toleration.effect)
         return ' | '.join(parts)
 
+    def _taint_summary(self, taint):
+        parts = [taint.key or '<any-key>']
+        if taint.value:
+            parts.append(taint.value)
+        if taint.effect:
+            parts.append(taint.effect)
+        return ' | '.join(parts)
+
+    def _schedulable_node_taints(self):
+        try:
+            nodes = self.v1.list_node()
+        except client.exceptions.ApiException as e:
+            raise RuntimeError(self._format_api_exception(e))
+
+        result = []
+        for node in nodes.items:
+            taints = node.spec.taints or []
+            for taint in taints:
+                if taint.effect in ('NoSchedule', 'PreferNoSchedule'):
+                    result.append({
+                        'node': node.metadata.name,
+                        'key': taint.key or '',
+                        'value': taint.value or '',
+                        'effect': taint.effect or '',
+                        'summary': self._taint_summary(taint)
+                    })
+        return result
+
+    def _unmatched_taints(self, tolerations, node_taints):
+        unmatched = []
+        for taint in node_taints:
+            if not self._taint_is_tolerated(taint, tolerations):
+                unmatched.append(taint)
+        return unmatched
+
+    def _taint_is_tolerated(self, taint, tolerations):
+        for toleration in tolerations:
+            effect = toleration.effect or ''
+            if effect and effect != taint.get('effect'):
+                continue
+
+            operator = toleration.operator or 'Equal'
+            key = toleration.key or ''
+            value = toleration.value or ''
+
+            if operator == 'Exists':
+                if not key or key == taint.get('key'):
+                    return True
+                continue
+
+            if operator == 'Equal':
+                if key == taint.get('key') and value == (taint.get('value') or ''):
+                    return True
+        return False
+
     def _container_diagnostic(self, status):
         state_name, state_reason, state_message = self._container_state(status.state)
         running = status.state.running if status.state and status.state.running else None
@@ -1012,8 +1079,9 @@ class K8sClient:
             return terminated.started_at.isoformat()
         return ''
 
-    def _infer_pod_diagnosis(self, pod, events):
+    def _infer_pod_diagnosis(self, pod, events, unmatched_taints=None):
         phase = pod.status.phase if pod.status else 'Unknown'
+        unmatched_taints = unmatched_taints or []
         messages = ' '.join(
             [event.get('reason', '') + ' ' + event.get('message', '') for event in events]
         ).lower()
@@ -1030,10 +1098,21 @@ class K8sClient:
                 'hint': 'Lower the Pod requests/limits, delete unused workloads, or add capacity to the cluster.'
             }
         if 'taint' in messages or "didn't tolerate" in messages:
+            if unmatched_taints:
+                summaries = ', '.join(t['summary'] for t in unmatched_taints[:3])
+                hint = (
+                    'This Pod is missing tolerations for: '
+                    f'{summaries}. Portal-created Pods now tolerate all NoSchedule/PreferNoSchedule taints in the single-node lab.'
+                )
+            else:
+                hint = (
+                    'The scheduler still reports an untolerated taint. Check the node taints section below; '
+                    'it likely comes from a custom node taint outside the original control-plane/master pair.'
+                )
             return {
                 'level': 'danger',
                 'summary': 'Pod is blocked by a node taint.',
-                'hint': 'New portal-created Pods include K3s control-plane tolerations. Delete and recreate this old Pending Pod, or add a matching toleration to its manifest.'
+                'hint': hint
             }
         if 'failedscheduling' in messages or '0/' in messages and 'nodes are available' in messages:
             return {
