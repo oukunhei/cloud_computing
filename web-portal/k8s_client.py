@@ -402,6 +402,7 @@ class K8sClient:
         diagnostics['network_plugins'] = self._network_plugin_health()
         diagnostics['system_namespaces'] = self._system_namespace_health()
         diagnostics['recent_cluster_warnings'] = self._recent_cluster_warnings(namespace)
+        diagnostics['repair_flow'] = self._monitoring_repair_flow(diagnostics)
 
         if not diagnostics['network_plugins'].get('ready', False):
             diagnostics['warnings'].append('Cluster network plugin is not ready.')
@@ -1224,7 +1225,8 @@ class K8sClient:
             'network_plugins': network_plugins,
             'kube_root_ca_mount_ok': not mount_errors,
             'projected_volume_errors': mount_errors,
-            'remediations': remediations
+            'remediations': remediations,
+            'repair_flow': self._pod_repair_flow(network_errors, mount_errors, network_plugins, node_conditions)
         }
 
     def _node_condition_summary(self, condition):
@@ -1251,6 +1253,227 @@ class K8sClient:
         if not steps:
             steps.append('Cluster-side blockers were not identified automatically. Inspect the raw Events and node description.')
         return steps
+
+    def _monitoring_repair_flow(self, diagnostics):
+        node_health = diagnostics.get('node_health') or {}
+        recent = diagnostics.get('recent_cluster_warnings') or {}
+        network_plugins = diagnostics.get('network_plugins') or {}
+        system_namespaces = diagnostics.get('system_namespaces') or []
+
+        if not node_health.get('ready', True):
+            return self._repair_flow_payload(
+                status='blocked',
+                category='node-not-ready',
+                summary='The node is Not Ready, so workloads cannot become healthy.',
+                steps=self._node_not_ready_steps(),
+                evidence=self._node_not_ready_evidence(node_health)
+            )
+        if recent.get('cni_not_initialized'):
+            return self._repair_flow_payload(
+                status='blocked',
+                category='cni-not-initialized',
+                summary='The cluster network plugin is not initialized.',
+                steps=self._cni_repair_steps(network_plugins),
+                evidence=self._cluster_warning_evidence(recent)
+            )
+        if recent.get('projected_volume_errors'):
+            return self._repair_flow_payload(
+                status='blocked',
+                category='projected-volume-registration',
+                summary='Projected volume registration is failing in the cluster control plane.',
+                steps=self._projected_volume_steps(),
+                evidence=self._cluster_warning_evidence(recent)
+            )
+        missing_or_unready = [item for item in system_namespaces if not item.get('exists') or not item.get('all_ready', False)]
+        if missing_or_unready:
+            return self._repair_flow_payload(
+                status='warning',
+                category='system-addon-not-ready',
+                summary='One or more system addon namespaces are missing or not ready.',
+                steps=self._system_addon_steps(missing_or_unready),
+                evidence=[{
+                    'kind': 'system-namespace',
+                    'summary': f'{item.get("namespace")}: {item.get("reason")}'
+                } for item in missing_or_unready]
+            )
+        return self._repair_flow_payload(
+            status='healthy',
+            category='unknown',
+            summary='No blocking cluster health issues were detected.',
+            steps=[],
+            evidence=[]
+        )
+
+    def _pod_repair_flow(self, network_errors, mount_errors, network_plugins, node_conditions):
+        if any(c.get('type') == 'Ready' and c.get('status') != 'True' for c in node_conditions):
+            return self._repair_flow_payload(
+                status='blocked',
+                category='node-not-ready',
+                summary='The assigned node is not Ready.',
+                steps=self._node_not_ready_steps(),
+                evidence=[{
+                    'kind': 'node-condition',
+                    'summary': f'{c.get("type")}: {c.get("status")} {c.get("reason") or ""}'.strip()
+                } for c in node_conditions if c.get('type') == 'Ready' and c.get('status') != 'True']
+            )
+        if network_errors:
+            return self._repair_flow_payload(
+                status='blocked',
+                category='cni-not-initialized',
+                summary='The Pod was scheduled correctly, but node networking is not initialized.',
+                steps=self._cni_repair_steps(network_plugins),
+                evidence=[{'kind': 'event', 'summary': message} for message in network_errors[:4]]
+            )
+        if mount_errors:
+            return self._repair_flow_payload(
+                status='blocked',
+                category='projected-volume-registration',
+                summary='The Pod was scheduled correctly, but projected volume registration is failing.',
+                steps=self._projected_volume_steps(),
+                evidence=[{'kind': 'event', 'summary': message} for message in mount_errors[:4]]
+            )
+        return self._repair_flow_payload(
+            status='warning',
+            category='unknown',
+            summary='Cluster runtime is not clearly blocked, but the Pod is not healthy yet.',
+            steps=self._unknown_repair_steps(),
+            evidence=[]
+        )
+
+    def _repair_flow_payload(self, status, category, summary, steps, evidence):
+        return {
+            'status': status,
+            'primary_category': category,
+            'summary': summary,
+            'steps': steps,
+            'evidence': evidence
+        }
+
+    def _node_not_ready_steps(self):
+        return [
+            self._repair_step(
+                'Check K3s service status',
+                'A NotReady node often means the K3s service is unhealthy or stopped.',
+                ['sudo systemctl status k3s'],
+                'The service should be active and recent logs should not show fatal startup errors.'
+            ),
+            self._repair_step(
+                'Restart K3s if needed',
+                'Restarting K3s can restore kubelet, container runtime, and addon reconciliation on a single-node lab host.',
+                ['sudo systemctl restart k3s'],
+                'The node should move toward Ready and system pods should begin recovering.'
+            ),
+            self._repair_step(
+                'Recheck node readiness',
+                'Confirm the control plane is publishing a healthy node status again.',
+                ['KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes'],
+                'The node should report Ready.'
+            ),
+            self._repair_step(
+                'Recheck system pods',
+                'Core addons must recover before tenant Pods will start cleanly.',
+                ['KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods -n kube-system'],
+                'Core system pods should move to Running/Ready.'
+            )
+        ]
+
+    def _cni_repair_steps(self, network_plugins):
+        namespaces = network_plugins.get('namespaces', []) if network_plugins else []
+        focus_namespaces = [item.get('namespace') for item in namespaces if not item.get('all_ready', False) or not item.get('exists', False)]
+        namespace_hint = ', '.join(focus_namespaces) if focus_namespaces else 'kube-system, calico-system, tigera-operator'
+        return [
+            self._repair_step(
+                'Inspect network plugin pods',
+                'The CNI must be healthy before kubelet can create pod sandboxes.',
+                [
+                    'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods -n kube-system',
+                    'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods -n calico-system'
+                ],
+                f'Focus first on: {namespace_hint}. Network-related pods should be Running and Ready.'
+            ),
+            self._repair_step(
+                'Check K3s service and addon logs',
+                'Single-node K3s commonly reports CNI bootstrap failures through the K3s service logs.',
+                ['sudo systemctl status k3s'],
+                'Look for networking or addon initialization errors to clear before retrying workloads.'
+            ),
+            self._repair_step(
+                'Recheck pod events after CNI recovery',
+                'Once networking is back, the same Pod should stop reporting NetworkNotReady.',
+                ['KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get events -n kube-system --sort-by=.lastTimestamp'],
+                'New events should no longer mention CNI not initialized.'
+            )
+        ]
+
+    def _projected_volume_steps(self):
+        return [
+            self._repair_step(
+                'Inspect kube-system addon pods',
+                'Projected-volume registration errors often come from control-plane or addon reconciliation instability.',
+                ['KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods -n kube-system'],
+                'Core addon pods such as coredns, traefik, and control-plane-managed workloads should be healthy.'
+            ),
+            self._repair_step(
+                'Review kube-system events',
+                'The failing ConfigMap-backed or projected resources are usually named directly in recent events.',
+                ['KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get events -n kube-system --sort-by=.lastTimestamp'],
+                'Errors mentioning kube-root-ca.crt or object not registered should stop appearing.'
+            ),
+            self._repair_step(
+                'Retry tenant workloads only after registration errors stop',
+                'Recreating Pods too early will just reproduce the same mount failure.',
+                ['KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes'],
+                'Once the node and kube-system are healthy, tenant Pods can be recreated safely.'
+            )
+        ]
+
+    def _system_addon_steps(self, namespaces):
+        focus = ', '.join(item.get('namespace') for item in namespaces)
+        return [
+            self._repair_step(
+                'Inspect missing or degraded addon namespaces',
+                'Tenant workloads depend on system addons being present and ready.',
+                [
+                    'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods -n kube-system',
+                    'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get pods -n calico-system'
+                ],
+                f'Focus on namespaces: {focus}. Restore addon readiness before re-testing tenant workloads.'
+            )
+        ]
+
+    def _unknown_repair_steps(self):
+        return [
+            self._repair_step(
+                'Inspect raw cluster and pod events',
+                'The automatic rules did not identify a primary runtime blocker.',
+                [
+                    'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get nodes',
+                    'KUBECONFIG=/etc/rancher/k3s/k3s.yaml kubectl get events -n kube-system --sort-by=.lastTimestamp'
+                ],
+                'The next blocking signal should become obvious from current events.'
+            )
+        ]
+
+    def _repair_step(self, title, why, command, expected_signal):
+        return {
+            'title': title,
+            'why': why,
+            'command': command,
+            'expected_signal': expected_signal
+        }
+
+    def _node_not_ready_evidence(self, node_health):
+        evidence = []
+        for node in node_health.get('nodes', []):
+            if not node.get('ready', True):
+                evidence.append({
+                    'kind': 'node',
+                    'summary': f'{node.get("name")} is Not Ready'
+                })
+        return evidence
+
+    def _cluster_warning_evidence(self, recent):
+        return [{'kind': 'event', 'summary': message} for message in recent.get('messages', [])[:6]]
 
     def _unmatched_taints(self, tolerations, node_taints):
         unmatched = []
@@ -1329,6 +1552,7 @@ class K8sClient:
 
         if 'insufficient cpu' in messages or 'insufficient memory' in messages or 'insufficient ephemeral-storage' in messages:
             return {
+                'category': 'scheduling',
                 'level': 'danger',
                 'summary': 'Pod cannot be scheduled because node resources are insufficient.',
                 'hint': 'Lower the Pod requests/limits, delete unused workloads, or add capacity to the cluster.'
@@ -1346,6 +1570,7 @@ class K8sClient:
                     'it likely comes from a custom node taint outside the original control-plane/master pair.'
                 )
             return {
+                'category': 'scheduling',
                 'level': 'danger',
                 'summary': 'Pod is blocked by a node taint.',
                 'hint': hint

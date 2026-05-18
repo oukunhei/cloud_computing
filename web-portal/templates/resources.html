@@ -616,6 +616,12 @@ function renderClusterHealth(data) {
     const metrics = data.metrics_api || {};
     const nodeHealth = data.node_health || {};
     const pluginHealth = data.network_plugins || {};
+    const repairFlow = data.repair_flow || {};
+    const statusClass = repairFlow.status === 'healthy'
+        ? 'alert-success'
+        : repairFlow.status === 'warning'
+            ? 'alert-warning'
+            : 'alert-danger';
     return `
         <div class="row g-3 mb-3">
             ${renderKeyValue({
@@ -625,12 +631,16 @@ function renderClusterHealth(data) {
                 Prometheus: data.prometheus?.reachable ? 'Reachable' : 'Unavailable'
             })}
         </div>
-        <div class="alert ${pluginHealth.ready ? 'alert-success' : 'alert-danger'} py-2">
-            <strong>${pluginHealth.ready ? 'Network plugin is ready.' : 'Network plugin is not ready.'}</strong>
-            <div class="small mt-1">${escapeHtml(pluginHealth.reason || '')}</div>
+        <div class="alert ${statusClass} py-2">
+            <strong>${escapeHtml(repairFlow.summary || (pluginHealth.ready ? 'Cluster health looks good.' : 'Cluster health requires attention.'))}</strong>
+            <div class="small mt-1">Current blocker: ${escapeHtml(repairFlow.primary_category || 'unknown')}</div>
         </div>
+        <h6>Repair Steps</h6>
+        ${renderRepairSteps(repairFlow.steps)}
         <h6>Warnings</h6>
         ${renderWarningList(data.warnings)}
+        <h6 class="mt-3">Evidence</h6>
+        ${renderSimpleList('Repair Evidence', repairFlow.evidence)}
         <h6 class="mt-3">Nodes</h6>
         ${renderNodeHealth(nodeHealth.nodes)}
         <h6 class="mt-3">System Namespaces</h6>
@@ -656,6 +666,32 @@ function renderConditions(conditions) {
                     `).join('')}
                 </tbody>
             </table>
+        </div>
+    `;
+}
+
+function renderRepairSteps(steps) {
+    if (!steps || steps.length === 0) {
+        return '<p class="text-muted mb-0">No repair steps are needed right now.</p>';
+    }
+    return `
+        <div class="accordion" id="repair-steps">
+            ${steps.map((step, index) => `
+                <div class="accordion-item">
+                    <h2 class="accordion-header" id="repair-step-${index}">
+                        <button class="accordion-button ${index === 0 ? '' : 'collapsed'}" type="button" data-bs-toggle="collapse" data-bs-target="#repair-step-body-${index}">
+                            ${index + 1}. ${escapeHtml(step.title)}
+                        </button>
+                    </h2>
+                    <div id="repair-step-body-${index}" class="accordion-collapse collapse ${index === 0 ? 'show' : ''}">
+                        <div class="accordion-body">
+                            <p class="mb-2 small">${escapeHtml(step.why || '')}</p>
+                            <pre class="diagnostic-terminal mb-2">${escapeHtml((step.command || []).join('\n'))}</pre>
+                            <div class="small text-muted">Expected signal: ${escapeHtml(step.expected_signal || '-')}</div>
+                        </div>
+                    </div>
+                </div>
+            `).join('')}
         </div>
     `;
 }
@@ -710,6 +746,7 @@ function renderPodDiagnostics(data) {
     const pod = data.pod || {};
     const diagnosis = data.diagnosis || {};
     const clusterHealth = data.cluster_health || {};
+    const repairFlow = clusterHealth.repair_flow || {};
     return `
         <div class="alert alert-${escapeHtml(diagnosis.level || 'secondary')} mb-3">
             <div class="d-flex flex-wrap justify-content-between gap-2">
@@ -758,9 +795,18 @@ function renderPodDiagnostics(data) {
             <div class="small mt-1">${escapeHtml(clusterHealth.cni_reason || '')}</div>
             ${clusterHealth.kube_root_ca_mount_ok ? '' : '<div class="small mt-1">Projected volume setup for kube-root-ca is failing.</div>'}
         </div>
+        <div class="alert ${(repairFlow.status === 'healthy') ? 'alert-success' : (repairFlow.status === 'warning' ? 'alert-warning' : 'alert-danger')}">
+            <strong>${escapeHtml(repairFlow.summary || 'Cluster runtime guidance unavailable.')}</strong>
+            <div class="small mt-1">Current blocker: ${escapeHtml(repairFlow.primary_category || 'unknown')}</div>
+            ${(diagnosis.category === 'runtime-network' || diagnosis.category === 'runtime-mount') ? '<div class="small mt-1">Pod spec is valid; cluster runtime is blocking startup.</div>' : ''}
+        </div>
         ${renderSimpleList('Assigned Node Taints', (clusterHealth.node_taints || []).map(item => ({ summary: item })))}
         ${renderSimpleList('Node Conditions', (clusterHealth.node_conditions || []).map(item => ({ summary: item.summary || `${item.type}: ${item.status}` })))}
         ${renderNamespaceHealth(clusterHealth.network_plugins ? clusterHealth.network_plugins.namespaces : [])}
+        <h6 class="mt-3">Repair Flow</h6>
+        ${renderRepairSteps(repairFlow.steps)}
+        <h6 class="mt-3">Repair Evidence</h6>
+        ${renderSimpleList('Evidence', repairFlow.evidence)}
         <h6 class="mt-3">Remediations</h6>
         ${renderWarningList(clusterHealth.remediations)}
     `;
