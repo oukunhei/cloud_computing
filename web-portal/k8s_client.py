@@ -567,16 +567,19 @@ class K8sClient:
                 selector=client.V1LabelSelector(match_labels=labels),
                 template=client.V1PodTemplateSpec(
                     metadata=client.V1ObjectMeta(labels=labels),
-                    spec=client.V1PodSpec(containers=[
-                        client.V1Container(
-                            name='nginx',
-                            image='nginx:alpine',
-                            ports=[client.V1ContainerPort(container_port=80)],
-                            resources=client.V1ResourceRequirements(
-                                requests={'cpu': '100m', 'memory': '128Mi'}
+                    spec=client.V1PodSpec(
+                        tolerations=self._default_workload_tolerations(),
+                        containers=[
+                            client.V1Container(
+                                name='nginx',
+                                image='nginx:alpine',
+                                ports=[client.V1ContainerPort(container_port=80)],
+                                resources=client.V1ResourceRequirements(
+                                    requests={'cpu': '100m', 'memory': '128Mi'}
+                                )
                             )
-                        )
-                    ])
+                        ]
+                    )
                 )
             )
         )
@@ -660,6 +663,7 @@ class K8sClient:
             ),
             spec=client.V1PodSpec(
                 restart_policy=spec.get('restart_policy') or 'Always',
+                tolerations=self._custom_pod_tolerations(spec.get('tolerations')),
                 containers=[client.V1Container(**container_kwargs)]
             )
         )
@@ -854,6 +858,37 @@ class K8sClient:
             return [part.strip() for part in value.splitlines() if part.strip()]
         return [str(part).strip() for part in value if str(part).strip()]
 
+    def _default_workload_tolerations(self):
+        return [
+            client.V1Toleration(
+                key='node-role.kubernetes.io/control-plane',
+                operator='Exists',
+                effect='NoSchedule'
+            ),
+            client.V1Toleration(
+                key='node-role.kubernetes.io/master',
+                operator='Exists',
+                effect='NoSchedule'
+            )
+        ]
+
+    def _custom_pod_tolerations(self, tolerations):
+        result = self._default_workload_tolerations()
+        for item in tolerations or []:
+            key = (item.get('key') or '').strip()
+            operator = (item.get('operator') or 'Exists').strip()
+            effect = (item.get('effect') or 'NoSchedule').strip()
+            value = (item.get('value') or '').strip()
+            if not key:
+                continue
+            result.append(client.V1Toleration(
+                key=key,
+                operator=operator,
+                value=value or None,
+                effect=effect or None
+            ))
+        return result
+
     def _pod_exists(self, namespace, name):
         try:
             self.v1.read_namespaced_pod(name=name, namespace=namespace)
@@ -988,7 +1023,7 @@ class K8sClient:
             return {
                 'level': 'danger',
                 'summary': 'Pod is blocked by a node taint.',
-                'hint': 'Schedule onto an untainted node or add an appropriate toleration.'
+                'hint': 'New portal-created Pods include K3s control-plane tolerations. Delete and recreate this old Pending Pod, or add a matching toleration to its manifest.'
             }
         if 'failedscheduling' in messages or '0/' in messages and 'nodes are available' in messages:
             return {
