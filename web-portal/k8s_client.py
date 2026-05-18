@@ -680,13 +680,20 @@ class K8sClient:
         self._ensure_namespace_exists(namespace)
         name = self._required_dns_label(name, 'Pod name')
         try:
-            self.v1.delete_namespaced_pod(name=name, namespace=namespace)
+            self.v1.delete_namespaced_pod(
+                name=name,
+                namespace=namespace,
+                body=client.V1DeleteOptions(grace_period_seconds=0)
+            )
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 raise ValueError(f'Pod {name} does not exist in namespace {namespace}.')
             raise RuntimeError(self._format_api_exception(e))
 
-        return f'Pod {name} deletion requested in namespace {namespace}.'
+        deleted = self._wait_for_pod_deleted(namespace, name)
+        if not deleted:
+            return f'Pod {name} deletion requested in namespace {namespace}, but it is still terminating.'
+        return f'Pod {name} deleted from namespace {namespace}.'
 
     def _required_dns_label(self, value, label):
         value = (value or '').strip().lower()
@@ -795,6 +802,18 @@ class K8sClient:
             import time
             time.sleep(delay_seconds)
         return None
+
+    def _wait_for_pod_deleted(self, namespace, name, attempts=12, delay_seconds=0.5):
+        for _ in range(attempts):
+            try:
+                self.v1.read_namespaced_pod(name=name, namespace=namespace)
+            except client.exceptions.ApiException as e:
+                if e.status == 404:
+                    return True
+                raise RuntimeError(self._format_api_exception(e))
+            import time
+            time.sleep(delay_seconds)
+        return False
 
     def _pod_summary(self, pod):
         return {

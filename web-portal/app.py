@@ -315,18 +315,21 @@ app.config['TEMPLATES_AUTO_RELOAD'] = True
 app.jinja_env.auto_reload = True
 DNS_LABEL_RE = re.compile(r'^[a-z0-9]([-a-z0-9]*[a-z0-9])?$')
 VALID_ROLES = {'cluster-admin', 'admin', 'developer', 'viewer'}
-PORTAL_BUILD_ID = 'custom-pod-create-v2'
+PORTAL_BUILD_ID = 'custom-pod-create-v2-pod-delete-v1'
 
 
 def current_identity():
     namespace = session.get('namespace')
+    role = session.get('role')
     return {
-        'role': session.get('role'),
+        'role': role,
         'namespace': namespace,
-        'is_logged_in': bool(session.get('role')),
+        'is_logged_in': bool(role),
         'is_platform_admin': is_platform_admin(),
-        'is_tenant_admin': session.get('role') == 'admin',
-        'display_role': display_role(session.get('role'))
+        'is_tenant_admin': role == 'admin',
+        'can_create_pods': role in ('admin', 'developer'),
+        'can_delete_pods': role == 'admin',
+        'display_role': display_role(role)
     }
 
 
@@ -672,7 +675,13 @@ def api_create_custom_pod(namespace):
 def api_delete_pod(namespace, pod_name):
     try:
         message = k8s.delete_pod(namespace, pod_name)
-        return jsonify({'success': True, 'message': message})
+        resources = k8s.get_namespace_resources(namespace)
+        return jsonify({
+            'success': True,
+            'message': message,
+            'pods': resources.get('pods', []),
+            'pods_error': resources.get('pods_error')
+        })
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
     except RuntimeError as e:

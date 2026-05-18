@@ -24,8 +24,8 @@
     </div>
 </div>
 
-{% set can_create_pods = identity.namespace == namespace and identity.role in ['admin', 'developer'] %}
-{% set can_delete_pods = identity.namespace == namespace and identity.role == 'admin' %}
+{% set can_create_pods = identity.namespace == namespace and identity.can_create_pods %}
+{% set can_delete_pods = identity.namespace == namespace and identity.can_delete_pods %}
 <div class="row g-4 mb-4">
     <div class="col-xl-5">
         <div class="card border-0 shadow-sm h-100">
@@ -224,6 +224,38 @@ function statusBadge(status) {
     return `<span class="badge ${classes[status] || 'bg-secondary'}">${status || 'Unknown'}</span>`;
 }
 
+function setTextCell(row, value, className = '') {
+    const cell = document.createElement('td');
+    if (className) cell.className = className;
+    cell.textContent = value;
+    row.appendChild(cell);
+    return cell;
+}
+
+function setHtmlCell(row, html, className = '') {
+    const cell = document.createElement('td');
+    if (className) cell.className = className;
+    cell.innerHTML = html;
+    row.appendChild(cell);
+    return cell;
+}
+
+function renderPodActionCell(row, pod) {
+    const cell = document.createElement('td');
+    cell.className = 'text-end';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-sm btn-outline-danger';
+    button.dataset.podName = pod.name;
+    button.title = `Delete ${pod.name}`;
+    button.innerHTML = '<i class="bi bi-trash"></i> Delete';
+    button.addEventListener('click', () => deletePod(pod.name, button));
+
+    cell.appendChild(button);
+    row.appendChild(cell);
+}
+
 async function loadNamespacePods() {
     const table = document.getElementById('namespace-pods-table');
     const tbody = table.querySelector('tbody');
@@ -269,24 +301,26 @@ function renderNamespacePods(pods) {
 
     empty.classList.add('d-none');
     table.classList.remove('d-none');
-    tbody.innerHTML = pods.map(pod => `
-            <tr>
-                <td><code>${pod.name}</code></td>
-                <td>${statusBadge(pod.status)}</td>
-                <td>${pod.ready || '-'}</td>
-                <td>${pod.restarts ?? 0}</td>
-                <td>${pod.age || '-'}</td>
-                <td class="small">${resourceSummary(pod.requests)}</td>
-                <td class="small">${resourceSummary(pod.limits)}</td>
-                ${CAN_DELETE_PODS ? `
-                <td class="text-end">
-                    <button class="btn btn-sm btn-outline-danger" onclick="deletePod('${pod.name}')">
-                        <i class="bi bi-trash"></i> Delete
-                    </button>
-                </td>
-                ` : ''}
-            </tr>
-        `).join('');
+    tbody.replaceChildren();
+    pods.forEach(pod => {
+        const row = document.createElement('tr');
+        const nameCell = document.createElement('td');
+        const code = document.createElement('code');
+        code.textContent = pod.name;
+        nameCell.appendChild(code);
+        row.appendChild(nameCell);
+
+        setHtmlCell(row, statusBadge(pod.status));
+        setTextCell(row, pod.ready || '-');
+        setTextCell(row, pod.restarts ?? 0);
+        setTextCell(row, pod.age || '-');
+        setHtmlCell(row, resourceSummary(pod.requests), 'small');
+        setHtmlCell(row, resourceSummary(pod.limits), 'small');
+        if (CAN_DELETE_PODS) {
+            renderPodActionCell(row, pod);
+        }
+        tbody.appendChild(row);
+    });
 }
 
 async function waitForPodInList(podName) {
@@ -417,9 +451,14 @@ function createCustomPodFromButton(event) {
     return false;
 }
 
-async function deletePod(podName) {
+async function deletePod(podName, button = null) {
     if (!CAN_DELETE_PODS) return;
     if (!confirm(`Delete Pod ${podName} from namespace ${NAMESPACE}?`)) return;
+
+    if (button) {
+        button.disabled = true;
+        button.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Deleting';
+    }
 
     try {
         const result = await apiDelete(`/api/namespaces/${NAMESPACE}/pods/${podName}`);
@@ -428,9 +467,21 @@ async function deletePod(podName) {
             return;
         }
         showToast(result.message || `Pod ${podName} deletion requested.`, 'success');
-        await loadNamespacePods();
+        if (result.pods_error) {
+            showError(result.pods_error);
+            await loadNamespacePods();
+        } else if (Array.isArray(result.pods)) {
+            renderNamespacePods(result.pods);
+        } else {
+            await loadNamespacePods();
+        }
     } catch (e) {
         showError(e.message || `Failed to delete Pod ${podName}.`);
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.innerHTML = '<i class="bi bi-trash"></i> Delete';
+        }
     }
 }
 
