@@ -732,16 +732,23 @@ class K8sClient:
             self.v1.delete_namespaced_pod(
                 name=name,
                 namespace=namespace,
-                body=client.V1DeleteOptions(grace_period_seconds=0)
+                body=client.V1DeleteOptions(
+                    grace_period_seconds=0,
+                    propagation_policy='Foreground'
+                )
             )
         except client.exceptions.ApiException as e:
             if e.status == 404:
                 raise ValueError(f'Pod {name} does not exist in namespace {namespace}.')
             raise RuntimeError(self._format_api_exception(e))
 
-        deleted = self._wait_for_pod_deleted(namespace, name)
+        deleted = self._wait_for_pod_deleted(namespace, name, attempts=30, delay_seconds=0.5)
         if not deleted:
-            return f'Pod {name} deletion requested in namespace {namespace}, but it is still terminating.'
+            self._force_delete_pod(namespace, name)
+            deleted = self._wait_for_pod_deleted(namespace, name, attempts=20, delay_seconds=0.5)
+
+        if not deleted:
+            raise RuntimeError(f'Pod {name} is still terminating in namespace {namespace}. Check finalizers or kubelet/container runtime health.')
         return f'Pod {name} deleted from namespace {namespace}.'
 
     def diagnose_pod(self, namespace, name):
@@ -960,6 +967,30 @@ class K8sClient:
             import time
             time.sleep(delay_seconds)
         return False
+
+    def _force_delete_pod(self, namespace, name):
+        try:
+            self.v1.patch_namespaced_pod(
+                name=name,
+                namespace=namespace,
+                body={'metadata': {'finalizers': []}}
+            )
+        except client.exceptions.ApiException as e:
+            if e.status != 404:
+                raise RuntimeError(self._format_api_exception(e))
+
+        try:
+            self.v1.delete_namespaced_pod(
+                name=name,
+                namespace=namespace,
+                body=client.V1DeleteOptions(
+                    grace_period_seconds=0,
+                    propagation_policy='Background'
+                )
+            )
+        except client.exceptions.ApiException as e:
+            if e.status != 404:
+                raise RuntimeError(self._format_api_exception(e))
 
     def _pod_events(self, namespace, name, uid):
         try:

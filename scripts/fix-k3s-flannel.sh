@@ -113,6 +113,25 @@ rewrite_systemd_sources() {
     fi
 }
 
+ensure_containerd_registry_mirrors() {
+    local path="/etc/rancher/k3s/registries.yaml"
+
+    if [ -f "$path" ]; then
+        backup_file "$path"
+    fi
+
+    cat > "$path" <<'EOF'
+mirrors:
+  docker.io:
+    endpoint:
+      - "https://docker.m.daocloud.io"
+      - "https://docker.nju.edu.cn"
+      - "https://docker.mirrors.sjtug.sjtu.edu.cn"
+EOF
+
+    ok "Configured K3s containerd registry mirrors in $path"
+}
+
 verify_no_disabled_flannel_args() {
     if grep -Eq '^[[:space:]]*flannel-backend:[[:space:]]*none[[:space:]]*$' /etc/rancher/k3s/config.yaml 2>/dev/null; then
         fail "flannel-backend: none is still present in /etc/rancher/k3s/config.yaml"
@@ -143,6 +162,7 @@ main() {
     log "Fixing K3s network configuration to use built-in flannel"
     rewrite_config_yaml
     rewrite_systemd_sources
+    ensure_containerd_registry_mirrors
     verify_no_disabled_flannel_args
 
     log "Reloading systemd and restarting k3s"
