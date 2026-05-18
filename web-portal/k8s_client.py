@@ -768,7 +768,9 @@ class K8sClient:
                 'host_ip': pod.status.host_ip or '',
                 'qos_class': pod.status.qos_class or '',
                 'start_time': pod.status.start_time.isoformat() if pod.status and pod.status.start_time else '',
-                'age': self._format_age(pod.metadata.creation_timestamp)
+                'age': self._format_age(pod.metadata.creation_timestamp),
+                'created_at': pod.metadata.creation_timestamp.isoformat() if pod.metadata.creation_timestamp else '',
+                'tolerations': [self._toleration_summary(t) for t in (pod.spec.tolerations or [])]
             },
             'diagnosis': diagnosis,
             'conditions': [self._pod_condition_diagnostic(c) for c in (pod.status.conditions or [])],
@@ -966,6 +968,14 @@ class K8sClient:
             'message': condition.message or '',
             'last_transition_time': condition.last_transition_time.isoformat() if condition.last_transition_time else ''
         }
+
+    def _toleration_summary(self, toleration):
+        parts = [toleration.key or '<any-key>', toleration.operator or 'Equal']
+        if toleration.value:
+            parts.append(toleration.value)
+        if toleration.effect:
+            parts.append(toleration.effect)
+        return ' | '.join(parts)
 
     def _container_diagnostic(self, status):
         state_name, state_reason, state_message = self._container_state(status.state)
