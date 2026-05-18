@@ -7,18 +7,21 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-cd "$ROOT_DIR"
-
 KUBECONFIG_HOST_PATH="${KUBECONFIG_HOST_PATH:-/etc/rancher/k3s/k3s.yaml}"
 HOST_KUBECTL_PATH="${HOST_KUBECTL_PATH:-/usr/local/bin/kubectl}"
 FLASK_PORT="${FLASK_PORT:-8080}"
 DEMO_TENANT="${DEMO_TENANT:-team-alpha}"
-GRAFANA_PUBLIC_BASE_URL="${GRAFANA_PUBLIC_BASE_URL:-http://127.0.0.1:3000}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-}"
+GRAFANA_PUBLIC_BASE_URL="${GRAFANA_PUBLIC_BASE_URL:-/grafana}"
+GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-}"
 GRAFANA_INTERNAL_BASE_URL="${GRAFANA_INTERNAL_BASE_URL:-http://127.0.0.1:3000}"
 PROMETHEUS_INTERNAL_BASE_URL="${PROMETHEUS_INTERNAL_BASE_URL:-http://127.0.0.1:9090}"
 PORTAL_METRICS_BASE_URL="${PORTAL_METRICS_BASE_URL:-http://127.0.0.1:${FLASK_PORT}}"
 K3S_INSTALL_EXEC="${K3S_INSTALL_EXEC:-server --flannel-backend=vxlan}"
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT_DIR"
+ENV_PUBLIC_BASE_URL="$PUBLIC_BASE_URL"
 
 log() {
     echo -e "${BLUE}==>${NC} $1"
@@ -35,6 +38,31 @@ warn() {
 fail() {
     echo -e "${RED}FAIL${NC} $1"
     exit 1
+}
+
+set_env_value() {
+    local key="$1"
+    local value="$2"
+
+    if grep -q "^${key}=" .env; then
+        sed -i.bak "s|^${key}=.*|${key}=${value}|" .env
+    else
+        printf '%s=%s\n' "$key" "$value" >> .env
+    fi
+}
+
+detect_public_base_url() {
+    local detected_ip=""
+
+    detected_ip="$(curl -fsS --connect-timeout 2 https://api.ipify.org 2>/dev/null || true)"
+    if [ -z "$detected_ip" ]; then
+        detected_ip="$(curl -fsS --connect-timeout 2 https://ifconfig.me/ip 2>/dev/null || true)"
+    fi
+    if [ -n "$detected_ip" ]; then
+        printf 'http://%s:%s' "$detected_ip" "$FLASK_PORT"
+    else
+        printf 'http://127.0.0.1:%s' "$FLASK_PORT"
+    fi
 }
 
 inspect_k3s_network_config() {
@@ -58,7 +86,8 @@ inspect_k3s_network_config() {
     fi
 
     if [ "$found_issue" -eq 1 ]; then
-        fail "K3s is configured with flannel disabled, so the node will stay NotReady with 'cni plugin not initialized'. Run ./scripts/fix-k3s-flannel.sh on the host, then restart k3s."
+        warn "K3s is configured with flannel disabled, so the node will stay NotReady with 'cni plugin not initialized'. Run sudo ./scripts/fix-k3s-flannel.sh on the host."
+        warn "Continuing to start the portal so the UI and diagnostics remain available."
     fi
 }
 
@@ -72,6 +101,64 @@ compose() {
     fi
 }
 
+ensure_k3s_ready() {
+    if [ -x ./scripts/fix-k3s-flannel.sh ]; then
+        log "Ensuring K3s networking and registry mirrors"
+        if [ "$(id -u)" -eq 0 ]; then
+            ./scripts/fix-k3s-flannel.sh
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo ./scripts/fix-k3s-flannel.sh
+        else
+            warn "sudo is not available; skipped automatic K3s repair."
+        fi
+    else
+        warn "K3s repair helper not found or not executable: ./scripts/fix-k3s-flannel.sh"
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        if ! systemctl is-active --quiet k3s; then
+            log "Starting k3s service"
+            sudo systemctl start k3s
+        fi
+        ok "K3s service is active"
+    else
+        warn "systemctl not available; skipping K3s service check"
+    fi
+}
+
+wait_for_cluster_ready() {
+    if ! command -v kubectl >/dev/null 2>&1; then
+        warn "kubectl is not installed on the host; skipping node readiness wait."
+        return
+    fi
+
+    log "Waiting for Kubernetes node readiness"
+    for i in {1..60}; do
+        if KUBECONFIG="$KUBECONFIG_HOST_PATH" kubectl wait --for=condition=Ready node --all --timeout=5s >/dev/null 2>&1; then
+            ok "Kubernetes nodes are Ready"
+            return
+        fi
+        sleep 2
+    done
+
+    KUBECONFIG="$KUBECONFIG_HOST_PATH" kubectl get nodes || true
+    fail "Kubernetes nodes did not become Ready. Check: journalctl -u k3s -b --no-pager | tail -n 120"
+}
+
+prepull_runtime_images() {
+    if ! command -v crictl >/dev/null 2>&1; then
+        warn "crictl not found; skipping K3s pause image pre-pull."
+        return
+    fi
+
+    log "Pre-pulling K3s pod sandbox image"
+    if crictl pull docker.io/rancher/mirrored-pause:3.6 >/dev/null 2>&1; then
+        ok "K3s pod sandbox image is available"
+    else
+        warn "Could not pre-pull docker.io/rancher/mirrored-pause:3.6. Pod creation may wait on registry access."
+    fi
+}
+
 log "Preparing environment file"
 if [ ! -f .env ]; then
     cp .env.example .env
@@ -80,12 +167,33 @@ else
     ok ".env already exists"
 fi
 
-for env_key in HOST_KUBECTL_PATH KUBECTL_VERSION KUBECTL_BASE_URL RUNTIME_KUBECTL_INSTALL SECRET_KEY GRAFANA_PUBLIC_BASE_URL GRAFANA_INTERNAL_BASE_URL PROMETHEUS_INTERNAL_BASE_URL PORTAL_METRICS_BASE_URL; do
+for env_key in HOST_KUBECTL_PATH KUBECTL_VERSION KUBECTL_BASE_URL RUNTIME_KUBECTL_INSTALL SECRET_KEY PUBLIC_BASE_URL GRAFANA_PUBLIC_BASE_URL GRAFANA_ROOT_URL GRAFANA_INTERNAL_BASE_URL PROMETHEUS_INTERNAL_BASE_URL PORTAL_METRICS_BASE_URL; do
     if ! grep -q "^${env_key}=" .env; then
         grep "^${env_key}=" .env.example >> .env
         ok "Added missing ${env_key} to .env"
     fi
 done
+
+set -a
+. ./.env
+set +a
+
+PUBLIC_BASE_URL="${ENV_PUBLIC_BASE_URL:-${PUBLIC_BASE_URL:-}}"
+GRAFANA_PUBLIC_BASE_URL="${GRAFANA_PUBLIC_BASE_URL:-/grafana}"
+GRAFANA_ROOT_URL="${GRAFANA_ROOT_URL:-}"
+if [ -z "$PUBLIC_BASE_URL" ]; then
+    PUBLIC_BASE_URL="$(detect_public_base_url)"
+    set_env_value PUBLIC_BASE_URL "$PUBLIC_BASE_URL"
+    ok "Detected PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
+fi
+if [ "$GRAFANA_PUBLIC_BASE_URL" != "/grafana" ]; then
+    GRAFANA_PUBLIC_BASE_URL="/grafana"
+    set_env_value GRAFANA_PUBLIC_BASE_URL "$GRAFANA_PUBLIC_BASE_URL"
+    ok "Configured Grafana to be served through the portal at /grafana"
+fi
+GRAFANA_ROOT_URL="${PUBLIC_BASE_URL%/}/grafana/"
+set_env_value GRAFANA_ROOT_URL "$GRAFANA_ROOT_URL"
+ok "Configured GRAFANA_ROOT_URL=${GRAFANA_ROOT_URL}"
 
 log "Checking Docker"
 command -v docker >/dev/null 2>&1 || fail "Docker is required. Install Docker Engine first."
@@ -103,16 +211,7 @@ if ! command -v k3s >/dev/null 2>&1; then
 fi
 
 inspect_k3s_network_config
-
-if command -v systemctl >/dev/null 2>&1; then
-    if ! systemctl is-active --quiet k3s; then
-        log "Starting k3s service"
-        sudo systemctl start k3s
-    fi
-    ok "K3s service is active"
-else
-    warn "systemctl not available; skipping K3s service check"
-fi
+ensure_k3s_ready
 
 log "Preparing kubeconfig"
 if [ ! -f "$KUBECONFIG_HOST_PATH" ]; then
@@ -124,12 +223,16 @@ if [ ! -r "$KUBECONFIG_HOST_PATH" ]; then
     sudo chmod 644 "$KUBECONFIG_HOST_PATH"
 fi
 ok "Kubeconfig is readable: $KUBECONFIG_HOST_PATH"
+wait_for_cluster_ready
+prepull_runtime_images
 
 log "Running preflight checks"
 KUBECONFIG_HOST_PATH="$KUBECONFIG_HOST_PATH" HOST_KUBECTL_PATH="$HOST_KUBECTL_PATH" FLASK_PORT="$FLASK_PORT" ./scripts/check-prereqs.sh
 
 log "Using monitoring endpoints"
+ok "PUBLIC_BASE_URL=${PUBLIC_BASE_URL}"
 ok "GRAFANA_PUBLIC_BASE_URL=${GRAFANA_PUBLIC_BASE_URL}"
+ok "GRAFANA_ROOT_URL=${GRAFANA_ROOT_URL}"
 ok "GRAFANA_INTERNAL_BASE_URL=${GRAFANA_INTERNAL_BASE_URL}"
 ok "PROMETHEUS_INTERNAL_BASE_URL=${PROMETHEUS_INTERNAL_BASE_URL}"
 ok "PORTAL_METRICS_BASE_URL=${PORTAL_METRICS_BASE_URL}"
@@ -203,8 +306,8 @@ cat <<EOF
 ${GREEN}Lab platform is running.${NC}
 
 Open:
-  Portal:   http://127.0.0.1:${FLASK_PORT}/login
-  Grafana:  http://127.0.0.1:3000  (admin / admin)
+  Portal:   ${PUBLIC_BASE_URL%/}/login
+  Grafana:  ${PUBLIC_BASE_URL%/}/grafana/  (embedded in the Resource page)
   Prometheus: http://127.0.0.1:9090
 
 Useful commands:
