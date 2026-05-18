@@ -700,6 +700,20 @@ def api_delete_pod(namespace, pod_name):
         return jsonify({'error': f'Unexpected error while deleting Pod: {e}'}), 500
 
 
+@app.route('/api/namespaces/<namespace>/pods/<pod_name>/diagnostics')
+@require_login
+@require_namespace_access
+def api_pod_diagnostics(namespace, pod_name):
+    try:
+        return jsonify(k8s.diagnose_pod(namespace, pod_name))
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 404
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 500
+    except Exception as e:
+        return jsonify({'error': f'Unexpected error while diagnosing Pod: {e}'}), 500
+
+
 @app.route('/api/namespaces/<namespace>/demo-workload', methods=['DELETE'])
 @require_login
 @require_workload_write

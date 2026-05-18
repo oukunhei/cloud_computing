@@ -724,6 +724,56 @@ class K8sClient:
             return f'Pod {name} deletion requested in namespace {namespace}, but it is still terminating.'
         return f'Pod {name} deleted from namespace {namespace}.'
 
+    def diagnose_pod(self, namespace, name):
+        if not self.connected:
+            raise RuntimeError('Not connected to Kubernetes')
+
+        self._ensure_namespace_exists(namespace)
+        name = self._required_dns_label(name, 'Pod name')
+        try:
+            pod = self.v1.read_namespaced_pod(name=name, namespace=namespace)
+        except client.exceptions.ApiException as e:
+            if e.status == 404:
+                raise ValueError(f'Pod {name} does not exist in namespace {namespace}.')
+            raise RuntimeError(self._format_api_exception(e))
+
+        events = self._pod_events(namespace, name, pod.metadata.uid)
+        diagnosis = self._infer_pod_diagnosis(pod, events)
+        containers = [self._container_diagnostic(c) for c in (pod.status.container_statuses or [])]
+        init_containers = [self._container_diagnostic(c) for c in (pod.status.init_container_statuses or [])]
+
+        commands = [
+            f'kubectl get pod {name} -n {namespace} -o wide',
+            f'kubectl describe pod {name} -n {namespace}',
+            f'kubectl get events -n {namespace} --field-selector involvedObject.name={name} --sort-by=.lastTimestamp'
+        ]
+        if pod.spec.node_name:
+            commands.append(f'kubectl describe node {pod.spec.node_name}')
+        commands.extend([
+            f'kubectl get resourcequota,limitrange -n {namespace}',
+            f'kubectl logs {name} -n {namespace} --all-containers --tail=80'
+        ])
+
+        return {
+            'pod': {
+                'name': pod.metadata.name,
+                'namespace': pod.metadata.namespace,
+                'phase': pod.status.phase if pod.status else 'Unknown',
+                'node': pod.spec.node_name or '',
+                'pod_ip': pod.status.pod_ip or '',
+                'host_ip': pod.status.host_ip or '',
+                'qos_class': pod.status.qos_class or '',
+                'start_time': pod.status.start_time.isoformat() if pod.status and pod.status.start_time else '',
+                'age': self._format_age(pod.metadata.creation_timestamp)
+            },
+            'diagnosis': diagnosis,
+            'conditions': [self._pod_condition_diagnostic(c) for c in (pod.status.conditions or [])],
+            'containers': containers,
+            'init_containers': init_containers,
+            'events': events,
+            'commands': commands
+        }
+
     def _required_dns_label(self, value, label):
         value = (value or '').strip().lower()
         if not value:
@@ -843,6 +893,138 @@ class K8sClient:
             import time
             time.sleep(delay_seconds)
         return False
+
+    def _pod_events(self, namespace, name, uid):
+        try:
+            events = self.v1.list_namespaced_event(
+                namespace=namespace,
+                field_selector=f'involvedObject.name={name}'
+            )
+        except client.exceptions.ApiException as e:
+            raise RuntimeError(self._format_api_exception(e))
+
+        result = []
+        for event in events.items:
+            involved = event.involved_object
+            if involved and involved.uid and uid and involved.uid != uid:
+                continue
+            result.append({
+                'type': event.type or '',
+                'reason': event.reason or '',
+                'message': event.message or '',
+                'count': event.count or 0,
+                'first_seen': self._event_time(event.first_timestamp, event.event_time),
+                'last_seen': self._event_time(event.last_timestamp, event.event_time),
+                'age': self._format_age(event.last_timestamp or event.first_timestamp or event.event_time)
+            })
+        return sorted(result, key=lambda e: e.get('last_seen') or e.get('first_seen') or '')
+
+    def _event_time(self, timestamp, event_time):
+        value = timestamp or event_time
+        return value.isoformat() if value else ''
+
+    def _pod_condition_diagnostic(self, condition):
+        return {
+            'type': condition.type or '',
+            'status': condition.status or '',
+            'reason': condition.reason or '',
+            'message': condition.message or '',
+            'last_transition_time': condition.last_transition_time.isoformat() if condition.last_transition_time else ''
+        }
+
+    def _container_diagnostic(self, status):
+        state_name, state_reason, state_message = self._container_state(status.state)
+        running = status.state.running if status.state and status.state.running else None
+        terminated = status.state.terminated if status.state and status.state.terminated else None
+        return {
+            'name': status.name,
+            'ready': bool(status.ready),
+            'restart_count': status.restart_count or 0,
+            'image': status.image or '',
+            'image_id': status.image_id or '',
+            'state': state_name,
+            'reason': state_reason,
+            'message': state_message,
+            'started_at': self._container_started_at(running, terminated),
+            'finished_at': terminated.finished_at.isoformat() if terminated and terminated.finished_at else ''
+        }
+
+    def _container_state(self, state):
+        if not state:
+            return 'Unknown', '', ''
+        if state.waiting:
+            return 'Waiting', state.waiting.reason or '', state.waiting.message or ''
+        if state.running:
+            return 'Running', '', ''
+        if state.terminated:
+            return 'Terminated', state.terminated.reason or '', state.terminated.message or ''
+        return 'Unknown', '', ''
+
+    def _container_started_at(self, running, terminated):
+        if running and running.started_at:
+            return running.started_at.isoformat()
+        if terminated and terminated.started_at:
+            return terminated.started_at.isoformat()
+        return ''
+
+    def _infer_pod_diagnosis(self, pod, events):
+        phase = pod.status.phase if pod.status else 'Unknown'
+        messages = ' '.join(
+            [event.get('reason', '') + ' ' + event.get('message', '') for event in events]
+        ).lower()
+        waiting_reasons = []
+        for status in (pod.status.container_statuses or []) + (pod.status.init_container_statuses or []):
+            if status.state and status.state.waiting and status.state.waiting.reason:
+                waiting_reasons.append(status.state.waiting.reason)
+        waiting_text = ' '.join(waiting_reasons).lower()
+
+        if 'insufficient cpu' in messages or 'insufficient memory' in messages or 'insufficient ephemeral-storage' in messages:
+            return {
+                'level': 'danger',
+                'summary': 'Pod cannot be scheduled because node resources are insufficient.',
+                'hint': 'Lower the Pod requests/limits, delete unused workloads, or add capacity to the cluster.'
+            }
+        if 'taint' in messages or "didn't tolerate" in messages:
+            return {
+                'level': 'danger',
+                'summary': 'Pod is blocked by a node taint.',
+                'hint': 'Schedule onto an untainted node or add an appropriate toleration.'
+            }
+        if 'failedscheduling' in messages or '0/' in messages and 'nodes are available' in messages:
+            return {
+                'level': 'danger',
+                'summary': 'Kubernetes scheduler found no node that can run this Pod.',
+                'hint': 'Check the FailedScheduling event message below for the exact predicate.'
+            }
+        if 'imagepullbackoff' in waiting_text or 'errimagepull' in waiting_text or 'failed to pull image' in messages:
+            return {
+                'level': 'danger',
+                'summary': 'Container image cannot be pulled.',
+                'hint': 'Use a registry reachable from the K3s node, configure a registry mirror, or fix the image name/tag.'
+            }
+        if 'crashloopbackoff' in waiting_text:
+            return {
+                'level': 'warning',
+                'summary': 'Container starts but crashes repeatedly.',
+                'hint': 'Check container logs and command/args/env configuration.'
+            }
+        if phase == 'Pending':
+            return {
+                'level': 'warning',
+                'summary': 'Pod is still Pending.',
+                'hint': 'Review Events and container waiting reasons below; Pending Pods do not consume runtime CPU/memory metrics yet.'
+            }
+        if phase == 'Running':
+            return {
+                'level': 'success',
+                'summary': 'Pod is Running.',
+                'hint': 'If Grafana shows no usage, wait for the next metrics scrape or check metrics-server availability.'
+            }
+        return {
+            'level': 'secondary',
+            'summary': f'Pod phase is {phase}.',
+            'hint': 'Review conditions, containers, and events below for details.'
+        }
 
     def _pod_summary(self, pod):
         return {
