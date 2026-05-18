@@ -18,6 +18,7 @@ GRAFANA_PUBLIC_BASE_URL="${GRAFANA_PUBLIC_BASE_URL:-http://127.0.0.1:3000}"
 GRAFANA_INTERNAL_BASE_URL="${GRAFANA_INTERNAL_BASE_URL:-http://127.0.0.1:3000}"
 PROMETHEUS_INTERNAL_BASE_URL="${PROMETHEUS_INTERNAL_BASE_URL:-http://127.0.0.1:9090}"
 PORTAL_METRICS_BASE_URL="${PORTAL_METRICS_BASE_URL:-http://127.0.0.1:${FLASK_PORT}}"
+K3S_INSTALL_EXEC="${K3S_INSTALL_EXEC:-server --flannel-backend=vxlan}"
 
 log() {
     echo -e "${BLUE}==>${NC} $1"
@@ -34,6 +35,31 @@ warn() {
 fail() {
     echo -e "${RED}FAIL${NC} $1"
     exit 1
+}
+
+inspect_k3s_network_config() {
+    local found_issue=0
+
+    if [ -f /etc/rancher/k3s/config.yaml ] && grep -Eq '(^|\s)flannel-backend:\s*none(\s|$)' /etc/rancher/k3s/config.yaml; then
+        warn "Detected disabled K3s CNI in /etc/rancher/k3s/config.yaml: flannel-backend: none"
+        found_issue=1
+    fi
+
+    if [ -f /etc/systemd/system/k3s.service.env ] && grep -Fq -- '--flannel-backend none' /etc/systemd/system/k3s.service.env; then
+        warn "Detected disabled K3s CNI in /etc/systemd/system/k3s.service.env: --flannel-backend none"
+        found_issue=1
+    fi
+
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl cat k3s 2>/dev/null | grep -Fq -- '--flannel-backend none'; then
+            warn "Detected disabled K3s CNI in systemd unit output: --flannel-backend none"
+            found_issue=1
+        fi
+    fi
+
+    if [ "$found_issue" -eq 1 ]; then
+        fail "K3s is configured with flannel disabled, so the node will stay NotReady with 'cni plugin not initialized'. Run ./scripts/fix-k3s-flannel.sh on the host, then restart k3s."
+    fi
 }
 
 compose() {
@@ -70,11 +96,13 @@ log "Checking K3s"
 if ! command -v k3s >/dev/null 2>&1; then
     if [ "${INSTALL_K3S:-false}" = "true" ]; then
         warn "K3s not found. Installing K3s because INSTALL_K3S=true."
-        curl -sfL https://get.k3s.io | sh -
+        curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="$K3S_INSTALL_EXEC" sh -
     else
         fail "K3s is not installed. Install it first, or run: INSTALL_K3S=true ./scripts/start-lab-platform.sh"
     fi
 fi
+
+inspect_k3s_network_config
 
 if command -v systemctl >/dev/null 2>&1; then
     if ! systemctl is-active --quiet k3s; then

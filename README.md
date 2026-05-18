@@ -216,8 +216,24 @@ cp .env.example .env
 ### Install K3s On Ubuntu
 
 ```bash
-curl -sfL https://get.k3s.io | sh -
+curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="server --flannel-backend=vxlan" sh -
 sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+```
+
+Important: do not install K3s with `--flannel-backend none` unless you will also install and maintain a separate CNI plugin. This project assumes the default K3s network is available.
+
+If a node stays `NotReady` with `NetworkPluginNotReady` and `cni plugin not initialized`, inspect the host config sources:
+
+```bash
+cat /etc/rancher/k3s/config.yaml
+cat /etc/systemd/system/k3s.service.env
+systemctl cat k3s
+```
+
+If any of them contain `flannel-backend: none` or `--flannel-backend none`, apply the project fix:
+
+```bash
+sudo ./scripts/fix-k3s-flannel.sh
 ```
 
 ### Verify Host Setup
