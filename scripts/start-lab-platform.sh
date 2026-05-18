@@ -175,6 +175,7 @@ for env_key in HOST_KUBECTL_PATH KUBECTL_VERSION KUBECTL_BASE_URL RUNTIME_KUBECT
 done
 
 set -a
+# shellcheck source=/dev/null
 . ./.env
 set +a
 
