@@ -24,8 +24,8 @@
     </div>
 </div>
 
-{% set can_create_pods = identity.namespace == namespace and identity.can_create_pods %}
-{% set can_delete_pods = identity.namespace == namespace and identity.can_delete_pods %}
+{% set can_create_pods = identity['role'] in ['admin', 'developer'] %}
+{% set can_delete_pods = identity['role'] == 'admin' %}
 <div class="row g-4 mb-4">
     <div class="col-xl-5">
         <div class="card border-0 shadow-sm h-100">
@@ -65,7 +65,7 @@
                         <div class="col-12">
                             <div class="alert alert-secondary py-2 small mb-0">
                                 <i class="bi bi-info-circle me-1"></i>
-                                Portal-created Pods tolerate single-node lab NoSchedule and PreferNoSchedule taints. If a Pod is still Pending after scheduling, the blocker is likely cluster runtime health rather than the Pod form.
+                                Portal-created Pods tolerate single-node lab NoSchedule and PreferNoSchedule taints. If a Pod is still Pending after scheduling, the blocker is likely the runtime/network layer rather than the Pod form.
                             </div>
                         </div>
                         <div class="col-md-6">
@@ -124,20 +124,6 @@
         </div>
     </div>
     <div class="col-xl-7">
-        <div class="card border-0 shadow-sm mb-4">
-            <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
-                <span><i class="bi bi-heart-pulse me-2"></i>Cluster Health</span>
-                <button class="btn btn-sm btn-outline-primary" type="button" onclick="loadClusterHealth()">
-                    <i class="bi bi-arrow-clockwise"></i> Refresh
-                </button>
-            </div>
-            <div class="card-body">
-                <div id="cluster-health-loading" class="text-muted">
-                    <span class="spinner-border spinner-border-sm me-2"></span>Checking cluster health...
-                </div>
-                <div id="cluster-health-content" class="d-none"></div>
-            </div>
-        </div>
         <div class="card border-0 shadow-sm">
             <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
                 <span><i class="bi bi-list-check me-2"></i>Current Pods</span>
@@ -612,43 +598,6 @@ function renderNamespaceHealth(items) {
     `;
 }
 
-function renderClusterHealth(data) {
-    const metrics = data.metrics_api || {};
-    const nodeHealth = data.node_health || {};
-    const pluginHealth = data.network_plugins || {};
-    const repairFlow = data.repair_flow || {};
-    const statusClass = repairFlow.status === 'healthy'
-        ? 'alert-success'
-        : repairFlow.status === 'warning'
-            ? 'alert-warning'
-            : 'alert-danger';
-    return `
-        <div class="row g-3 mb-3">
-            ${renderKeyValue({
-                Kubernetes: data.kubernetes_connected ? 'Connected' : 'Disconnected',
-                MetricsAPI: metrics.available ? 'Available' : 'Unavailable',
-                Grafana: data.grafana?.reachable ? 'Reachable' : 'Unavailable',
-                Prometheus: data.prometheus?.reachable ? 'Reachable' : 'Unavailable'
-            })}
-        </div>
-        <div class="alert ${statusClass} py-2">
-            <strong>${escapeHtml(repairFlow.summary || (pluginHealth.ready ? 'Cluster health looks good.' : 'Cluster health requires attention.'))}</strong>
-            <div class="small mt-1">Current blocker: ${escapeHtml(repairFlow.primary_category || 'unknown')}</div>
-        </div>
-        <h6>Repair Steps</h6>
-        ${renderRepairSteps(repairFlow.steps)}
-        <h6>Warnings</h6>
-        ${renderWarningList(data.warnings)}
-        <h6 class="mt-3">Evidence</h6>
-        ${renderSimpleList('Repair Evidence', repairFlow.evidence)}
-        <h6 class="mt-3">Nodes</h6>
-        ${renderNodeHealth(nodeHealth.nodes)}
-        <h6 class="mt-3">System Namespaces</h6>
-        ${renderNamespaceHealth(data.system_namespaces)}
-        ${renderSimpleList('Recent Cluster Warnings', (data.recent_cluster_warnings?.messages || []).map(message => ({ summary: message })))}
-    `;
-}
-
 function renderConditions(conditions) {
     if (!conditions || conditions.length === 0) return '<p class="text-muted mb-0">No conditions reported.</p>';
     return `
@@ -789,49 +738,8 @@ function renderPodDiagnostics(data) {
         ${renderContainers(data.containers, 'Containers')}
         <h6 class="mt-3">Events</h6>
         ${renderEvents(data.events)}
-        <h5 class="mt-4">Cluster Health</h5>
-        <div class="alert ${(clusterHealth.cni_ready && clusterHealth.kube_root_ca_mount_ok) ? 'alert-success' : 'alert-danger'}">
-            <strong>${clusterHealth.cni_ready ? 'Node network is ready.' : 'Node network is not ready.'}</strong>
-            <div class="small mt-1">${escapeHtml(clusterHealth.cni_reason || '')}</div>
-            ${clusterHealth.kube_root_ca_mount_ok ? '' : '<div class="small mt-1">Projected volume setup for kube-root-ca is failing.</div>'}
-        </div>
-        <div class="alert ${(repairFlow.status === 'healthy') ? 'alert-success' : (repairFlow.status === 'warning' ? 'alert-warning' : 'alert-danger')}">
-            <strong>${escapeHtml(repairFlow.summary || 'Cluster runtime guidance unavailable.')}</strong>
-            <div class="small mt-1">Current blocker: ${escapeHtml(repairFlow.primary_category || 'unknown')}</div>
-            ${(diagnosis.category === 'runtime-network' || diagnosis.category === 'runtime-mount') ? '<div class="small mt-1">Pod spec is valid; cluster runtime is blocking startup.</div>' : ''}
-        </div>
-        ${renderSimpleList('Assigned Node Taints', (clusterHealth.node_taints || []).map(item => ({ summary: item })))}
-        ${renderSimpleList('Node Conditions', (clusterHealth.node_conditions || []).map(item => ({ summary: item.summary || `${item.type}: ${item.status}` })))}
-        ${renderNamespaceHealth(clusterHealth.network_plugins ? clusterHealth.network_plugins.namespaces : [])}
-        <h6 class="mt-3">Repair Flow</h6>
-        ${renderRepairSteps(repairFlow.steps)}
-        <h6 class="mt-3">Repair Evidence</h6>
-        ${renderSimpleList('Evidence', repairFlow.evidence)}
-        <h6 class="mt-3">Remediations</h6>
-        ${renderWarningList(clusterHealth.remediations)}
+
     `;
-}
-
-async function loadClusterHealth() {
-    const loading = document.getElementById('cluster-health-loading');
-    const content = document.getElementById('cluster-health-content');
-    loading.classList.remove('d-none');
-    content.classList.add('d-none');
-
-    try {
-        const result = await apiGet(`/api/namespaces/${NAMESPACE}/monitoring-diagnostics`);
-        loading.classList.add('d-none');
-        if (result.error) {
-            content.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(result.error)}</div>`;
-        } else {
-            content.innerHTML = renderClusterHealth(result);
-        }
-    } catch (e) {
-        loading.classList.add('d-none');
-        content.innerHTML = `<div class="alert alert-danger mb-0">${escapeHtml(e.message || 'Failed to load cluster health.')}</div>`;
-    }
-
-    content.classList.remove('d-none');
 }
 
 async function diagnosePod(podName, button = null) {
@@ -901,7 +809,6 @@ async function deletePod(podName, button = null) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    loadClusterHealth();
     loadNamespacePods();
     if (CAN_CREATE_PODS) {
         const form = document.getElementById('custom-pod-form');

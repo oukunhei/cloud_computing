@@ -20,7 +20,7 @@ services:
       - FLASK_PORT=${FLASK_PORT:-8080}
       - USER_NAMESPACE=${USER_NAMESPACE:-lab-platform-users}
       - SECRET_KEY=${SECRET_KEY:-dev-only-change-me}
-      - GRAFANA_PUBLIC_BASE_URL=${GRAFANA_PUBLIC_BASE_URL:-http://127.0.0.1:3000}
+      - GRAFANA_PUBLIC_BASE_URL=${GRAFANA_PUBLIC_BASE_URL:-/grafana}
       - GRAFANA_INTERNAL_BASE_URL=${GRAFANA_INTERNAL_BASE_URL:-http://127.0.0.1:3000}
       - PROMETHEUS_INTERNAL_BASE_URL=${PROMETHEUS_INTERNAL_BASE_URL:-http://127.0.0.1:9090}
       - PORTAL_METRICS_BASE_URL=${PORTAL_METRICS_BASE_URL:-http://127.0.0.1:8080}
@@ -58,7 +58,8 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_HTTP_PORT=3000
-      - GF_SERVER_ROOT_URL=http://localhost:3000
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-%(protocol)s://%(domain)s:%(http_port)s/grafana/}
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
       - GF_SECURITY_ALLOW_EMBEDDING=true
       - GF_PANELS_DISABLE_SANITIZE_HTML=true
     restart: unless-stopped

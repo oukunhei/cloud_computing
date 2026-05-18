@@ -2,6 +2,8 @@ import os
 import re
 import threading
 import time
+import urllib.error
+import urllib.request
 from urllib.parse import quote_plus
 from functools import wraps
 from flask import Flask, render_template, jsonify, request, Response, redirect, session, url_for
@@ -16,6 +18,11 @@ from config import (
     GRAFANA_PUBLIC_BASE_URL,
     GRAFANA_INTERNAL_BASE_URL
 )
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
 
 # ── Prometheus metrics ──────────────────────────────────────────────
 prom_registry = CollectorRegistry()
@@ -148,6 +155,8 @@ _metrics_lock = threading.Lock()
 _metrics_cache_ttl = 15  # seconds
 _metrics_cached_data = None
 _metrics_cached_at = 0
+_metric_pod_status_labels = set()
+_metric_pod_usage_labels = set()
 
 METRIC_UP = Gauge(
     'k8s_portal_up',
@@ -204,15 +213,23 @@ def _collect_metrics():
         namespace = ns.metadata.name
 
         # --- Pods ---
+        current_pods = set()
         try:
             pods = k8s.v1.list_namespaced_pod(namespace)
             METRIC_POD_COUNT.labels(namespace=namespace).set(len(pods.items))
             for p in pods.items:
+                pod_name = p.metadata.name
+                current_pods.add(pod_name)
                 phase = p.status.phase or 'Unknown'
-                status_map = {'Running': 1, 'Pending': 2, 'Failed': 3, 'Succeeded': 1}
-                METRIC_POD_STATUS.labels(namespace=namespace, pod=p.metadata.name).set(
+                status_map = {'Running': 1, 'Pending': 2, 'Failed': 3, 'Succeeded': 4}
+                METRIC_POD_STATUS.labels(namespace=namespace, pod=pod_name).set(
                     status_map.get(phase, 0)
                 )
+            for old_namespace, old_pod in list(_metric_pod_status_labels):
+                if old_namespace == namespace and old_pod not in current_pods:
+                    METRIC_POD_STATUS.remove(old_namespace, old_pod)
+                    _metric_pod_status_labels.discard((old_namespace, old_pod))
+            _metric_pod_status_labels.update((namespace, pod_name) for pod_name in current_pods)
         except Exception:
             METRIC_POD_COUNT.labels(namespace=namespace).set(0)
 
@@ -245,13 +262,22 @@ def _collect_metrics():
             totals = usage.get('totals') or {}
             METRIC_NS_CPU_MILLICORES.labels(namespace=namespace).set(totals.get('cpu_millicores', 0))
             METRIC_NS_MEMORY_MIB.labels(namespace=namespace).set(totals.get('memory_mib', 0))
+            current_usage_pods = set()
             for pod in usage.get('pods', []):
-                METRIC_POD_CPU_MILLICORES.labels(namespace=namespace, pod=pod['name']).set(
+                pod_name = pod['name']
+                current_usage_pods.add(pod_name)
+                METRIC_POD_CPU_MILLICORES.labels(namespace=namespace, pod=pod_name).set(
                     pod.get('cpu_millicores', 0)
                 )
-                METRIC_POD_MEMORY_MIB.labels(namespace=namespace, pod=pod['name']).set(
+                METRIC_POD_MEMORY_MIB.labels(namespace=namespace, pod=pod_name).set(
                     pod.get('memory_mib', 0)
                 )
+            for old_namespace, old_pod in list(_metric_pod_usage_labels):
+                if old_namespace == namespace and old_pod not in current_usage_pods:
+                    METRIC_POD_CPU_MILLICORES.remove(old_namespace, old_pod)
+                    METRIC_POD_MEMORY_MIB.remove(old_namespace, old_pod)
+                    _metric_pod_usage_labels.discard((old_namespace, old_pod))
+            _metric_pod_usage_labels.update((namespace, pod_name) for pod_name in current_usage_pods)
 
     # ── Node-level USE collection ────────────────────────────────────
     # Build a lookup of node -> allocatable from nodes_info so we can
@@ -508,7 +534,10 @@ def tenants():
 def resources_page(namespace):
     if not can_use_namespace(namespace):
         return redirect(url_for('dashboard'))
-    grafana_base_url = (GRAFANA_PUBLIC_BASE_URL or GRAFANA_INTERNAL_BASE_URL).rstrip('/')
+    role = session.get('role')
+    can_create_pods = role in ('admin', 'developer')
+    can_delete_pods = role == 'admin'
+    grafana_base_url = (GRAFANA_PUBLIC_BASE_URL or '/grafana').rstrip('/')
     encoded_ns = quote_plus(namespace)
     grafana_dashboard_url = (
         f'{grafana_base_url}/d/k8s-namespace-resources'
@@ -522,7 +551,9 @@ def resources_page(namespace):
         'resources.html',
         namespace=namespace,
         grafana_dashboard_url=grafana_dashboard_url,
-        grafana_embed_url=grafana_embed_url
+        grafana_embed_url=grafana_embed_url,
+        can_create_pods=can_create_pods,
+        can_delete_pods=can_delete_pods
     )
 
 
@@ -542,6 +573,58 @@ def permissions():
 @require_login
 def settings_page():
     return render_template('settings.html')
+
+
+@app.route('/grafana/', defaults={'path': ''}, methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
+@app.route('/grafana/<path:path>', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'])
+@require_login
+def grafana_proxy(path):
+    base = GRAFANA_INTERNAL_BASE_URL.rstrip('/')
+    upstream_base = base if base.endswith('/grafana') else f'{base}/grafana'
+    query = request.query_string.decode('utf-8')
+    target = f'{upstream_base}/{path}'
+    if query:
+        target = f'{target}?{query}'
+
+    headers = {
+        key: value for key, value in request.headers.items()
+        if key.lower() not in ('host', 'connection', 'content-length', 'accept-encoding')
+    }
+    data = request.get_data() if request.method in ('POST', 'PUT', 'PATCH') else None
+    upstream_request = urllib.request.Request(target, data=data, headers=headers, method=request.method)
+    opener = urllib.request.build_opener(NoRedirectHandler)
+
+    try:
+        with opener.open(upstream_request, timeout=20) as upstream:
+            body = upstream.read()
+            response_headers = []
+            for key, value in upstream.headers.items():
+                lower = key.lower()
+                if lower in ('content-length', 'connection', 'transfer-encoding', 'content-encoding'):
+                    continue
+                if lower == 'location':
+                    if value.startswith(upstream_base):
+                        value = value.replace(upstream_base, '/grafana', 1)
+                    elif value.startswith(base):
+                        value = value.replace(base, '', 1)
+                response_headers.append((key, value))
+            return Response(body, status=upstream.status, headers=response_headers)
+    except urllib.error.HTTPError as exc:
+        body = exc.read()
+        response_headers = []
+        for key, value in exc.headers.items():
+            lower = key.lower()
+            if lower in ('content-length', 'connection', 'transfer-encoding', 'content-encoding'):
+                continue
+            if lower == 'location':
+                if value.startswith(upstream_base):
+                    value = value.replace(upstream_base, '/grafana', 1)
+                elif value.startswith(base):
+                    value = value.replace(base, '', 1)
+            response_headers.append((key, value))
+        return Response(body, status=exc.code, headers=response_headers)
+    except Exception as exc:
+        return Response(f'Grafana proxy error: {exc}', status=502, mimetype='text/plain')
 
 
 # API Routes
@@ -684,7 +767,9 @@ def api_create_custom_pod(namespace):
 @require_tenant_admin_workload_delete
 def api_delete_pod(namespace, pod_name):
     try:
+        global _metrics_cached_at
         message = k8s.delete_pod(namespace, pod_name)
+        _metrics_cached_at = 0
         resources = k8s.get_namespace_resources(namespace)
         return jsonify({
             'success': True,
