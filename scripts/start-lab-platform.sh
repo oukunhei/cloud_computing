@@ -58,7 +58,8 @@ inspect_k3s_network_config() {
     fi
 
     if [ "$found_issue" -eq 1 ]; then
-        fail "K3s is configured with flannel disabled, so the node will stay NotReady with 'cni plugin not initialized'. Run ./scripts/fix-k3s-flannel.sh on the host, then restart k3s."
+        warn "K3s is configured with flannel disabled, so the node will stay NotReady with 'cni plugin not initialized'. Run sudo ./scripts/fix-k3s-flannel.sh on the host."
+        warn "Continuing to start the portal so the UI and diagnostics remain available."
     fi
 }
 
