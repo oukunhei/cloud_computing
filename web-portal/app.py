@@ -24,6 +24,7 @@ class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         return None
 
+
 # ── Prometheus metrics ──────────────────────────────────────────────
 prom_registry = CollectorRegistry()
 

@@ -9,21 +9,35 @@ on:
 jobs:
   lint:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tool: [yamllint, shellcheck, flake8]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        if: matrix.tool != 'shellcheck'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
       - name: Run yamllint
+        if: matrix.tool == 'yamllint'
         run: |
           pip install yamllint
           yamllint -d relaxed -d "{rules: {line-length: disable}}" rbac/ resources/ networkpolicies/ demo/
 
       - name: Run shellcheck
+        if: matrix.tool == 'shellcheck'
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
           shellcheck onboard-team.sh scripts/*.sh web-portal/entrypoint.sh
 
       - name: Run flake8
+        if: matrix.tool == 'flake8'
         run: |
           pip install flake8
           flake8 web-portal/ \
