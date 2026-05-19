@@ -58,9 +58,9 @@ kubectl label namespace "$NAMESPACE" \
 echo -e "${YELLOW}  → Creating isolated user ServiceAccounts...${NC}"
 kubectl create namespace "$USER_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 kubectl label namespace "$USER_NAMESPACE" tenant.lab/system=users --overwrite
-kubectl create sa "${NAMESPACE}-admin" -n "$USER_NAMESPACE"
-kubectl create sa "${NAMESPACE}-dev" -n "$USER_NAMESPACE"
-kubectl create sa "${NAMESPACE}-view" -n "$USER_NAMESPACE"
+kubectl create sa "${NAMESPACE}-admin" -n "$USER_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+kubectl create sa "${NAMESPACE}-dev" -n "$USER_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+kubectl create sa "${NAMESPACE}-view" -n "$USER_NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 
 # 3. Apply Roles
 echo -e "${YELLOW}  → Applying Roles...${NC}"
