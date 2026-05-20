@@ -51,7 +51,7 @@ SA_DEV="system:serviceaccount:$USER_NS:${ALPHA}-dev"
 SA_ADMIN="system:serviceaccount:$USER_NS:${ALPHA}-admin"
 SA_VIEW="system:serviceaccount:$USER_NS:${ALPHA}-view"
 
-# Developer 读跨租户 Pods → Forbidden
+# Developer read cross namespace Pods → Forbidden
 STEP "Developer read $BETA Pods"
 OUTPUT=$(kubectl auth can-i get pods -n "$BETA" --as "$SA_DEV" 2>&1)
 if echo "$OUTPUT" | grep -q "^no$"; then
@@ -61,7 +61,7 @@ else
     ((FAILED++)) || true
 fi
 
-# Developer 删 Namespace → Forbidden
+# Developer delete Namespace → Forbidden
 STEP "Developer delete Namespace"
 OUTPUT=$(kubectl auth can-i delete namespaces --as "$SA_DEV" 2>&1)
 if echo "$OUTPUT" | grep -q "^no$"; then
@@ -71,7 +71,7 @@ else
     ((FAILED++)) || true
 fi
 
-# Developer 在自家create Deployment → Allowed
+# Developer create Deployment → Allowed
 STEP "Developer create Deployment in $ALPHA"
 OUTPUT=$(kubectl auth can-i create deployments -n "$ALPHA" --as "$SA_DEV" 2>&1)
 if echo "$OUTPUT" | grep -q "^yes$"; then
@@ -81,7 +81,7 @@ else
     ((FAILED++)) || true
 fi
 
-# Viewer 删 Pod → Forbidden
+# Viewer delete Pod → Forbidden
 STEP "Viewer delete $ALPHA Pod"
 OUTPUT=$(kubectl auth can-i delete pods -n "$ALPHA" --as "$SA_VIEW" 2>&1)
 if echo "$OUTPUT" | grep -q "^no$"; then
@@ -91,7 +91,7 @@ else
     ((FAILED++)) || true
 fi
 
-# Admin 删 Namespace → Forbidden (tenant admin cannot delete ns)
+# Admin delete Namespace → Forbidden (tenant admin cannot delete ns)
 STEP "Admin delete Namespace"
 OUTPUT=$(kubectl auth can-i delete namespaces --as "$SA_ADMIN" 2>&1)
 if echo "$OUTPUT" | grep -q "^no$"; then
@@ -118,7 +118,7 @@ INFO "════════════════════════�
 NET_FAILED=0
 NGINX_IP=""
 
-# 部署 nginx（带 app label 避免被误选）
+# deploy nginx
 STEP " Deploy nginx on $ALPHA"
 kubectl run nginx-alpha -n "$ALPHA" --image=nginx:alpine --restart=Never \
     --labels="app=validation-nginx,$LABEL" --port=80
@@ -141,7 +141,7 @@ else
     kubectl wait --for=condition=Ready pod/curl-beta -n "$BETA" --timeout=60s >/dev/null 2>&1 || true
     kubectl wait --for=condition=Ready pod/curl-alpha -n "$ALPHA" --timeout=60s >/dev/null 2>&1 || true
 
-    # 1) 跨租户 Pod IP 直连 → 应失败
+    # 1) cross tenant Pod IP connect → should fail
     STEP "Cross-tenant Pod IP connectivity ($BETA -> $NGINX_IP)"
     if OUTPUT=$(kubectl exec curl-beta -n "$BETA" -- wget -q -O- -T 5 "http://$NGINX_IP" 2>&1); then
         FAIL "Cross-tenant Pod IP connectivity → Success (expected to be blocked). Output: $OUTPUT"
@@ -150,7 +150,7 @@ else
         PASS "Cross-tenant Pod IP connectivity → Blocked"
     fi
 
-    # 2) 跨租户 Service DNS → 应被阻断 (NetworkPolicy 仅允许同 Namespace 访问)
+    # 2) cross tenant Service DNS → should be blocked (NetworkPolicy allow same Namespace visit)
     STEP "Cross-tenant Service DNS (nginx-alpha.$ALPHA.svc)"
     if OUTPUT=$(kubectl exec curl-beta -n "$BETA" -- wget -q -O- -T 5 "http://nginx-alpha.$ALPHA.svc.cluster.local" 2>&1); then
         FAIL "Cross-tenant Service DNS → Success (expected to be blocked). Output: $OUTPUT"
@@ -159,7 +159,7 @@ else
         PASS "Cross-tenant Service DNS → Blocked"
     fi
 
-    # 3) 同 Namespace → 应成功
+    # 3) same Namespace → should success
     STEP "Same-namespace connectivity ($ALPHA -> nginx-alpha)"
     if OUTPUT=$(kubectl exec curl-alpha -n "$ALPHA" -- wget -q -O- -T 5 "http://nginx-alpha" 2>&1); then
         PASS "Same-namespace connectivity → Success"
@@ -168,7 +168,7 @@ else
         ((NET_FAILED++)) || true
     fi
 
-    # DNS 解析参考（仅输出）
+    # DNS 
     STEP "DNS resolution test (Reference)"
     DNS_OUT=$(kubectl exec curl-beta -n "$BETA" -- nslookup "nginx-alpha.$ALPHA.svc.cluster.local" 2>&1 || true)
     if echo "$DNS_OUT" | grep -qi "address"; then
